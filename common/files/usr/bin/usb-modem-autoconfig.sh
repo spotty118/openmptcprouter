@@ -7,6 +7,11 @@
 
 set -u  # Catch undefined variables
 
+# Source network helper library for safe UCI operations
+if [ -f /usr/lib/omr/omr-network.sh ]; then
+    . /usr/lib/omr/omr-network.sh
+fi
+
 LOG_TAG="usb-modem-autoconfig"
 
 # Load USA carrier APN database if available
@@ -341,7 +346,7 @@ configure_modem_as_wan() {
 
         # Verify interface is actually up
         if ifstatus "$wan_name" 2>/dev/null | grep -q '"up":true'; then
-            log_msg "✓ Interface $wan_name is up and running"
+            log_msg "[OK] Interface $wan_name is up and running"
             ifup_success=1
         else
             log_msg "WARNING: Interface $wan_name ifup succeeded but interface not up"
@@ -372,8 +377,15 @@ is_modem_configured() {
         return 1
     fi
 
-    # Check all WAN interfaces
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+    # Check all WAN interfaces using helper library if available
+    local wan_list=""
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        wan_list=$(get_wan_interfaces)
+    else
+        wan_list=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1)
+    fi
+
+    for wan in $wan_list; do
         local device
         device=$(uci -q get "network.$wan.device")
 
@@ -404,7 +416,15 @@ is_modem_configured() {
 cleanup_disconnected_modems() {
     log_msg "Checking for disconnected modems..."
 
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan[0-9]" | cut -d. -f2 | cut -d= -f1); do
+    # Get WAN interfaces using helper library if available
+    local wan_list=""
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        wan_list=$(get_wan_interfaces)
+    else
+        wan_list=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan[0-9]" | cut -d. -f2 | cut -d= -f1)
+    fi
+
+    for wan in $wan_list; do
         local proto
         local device
         proto=$(uci -q get "network.$wan.proto")
@@ -473,8 +493,8 @@ main() {
     done
     
     if [ $configured -gt 0 ]; then
-        log_msg "✓ Configured $configured new USB modem(s) as additional WAN"
-        log_msg "✓ MPTCP bonding enabled for all WANs"
+        log_msg "[OK] Configured $configured new USB modem(s) as additional WAN"
+        log_msg "[OK] MPTCP bonding enabled for all WANs"
         log_msg "Reloading network to apply changes..."
         /etc/init.d/network reload
     else

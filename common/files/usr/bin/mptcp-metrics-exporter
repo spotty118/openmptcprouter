@@ -8,6 +8,17 @@ EXPORT_INTERVAL=10  # Update every 10 seconds
 
 mkdir -p "$EXPORT_DIR"
 
+# Track if we should continue running
+RUNNING=1
+
+# Signal handlers for graceful shutdown
+cleanup_and_exit() {
+    log_info "MPTCP Metrics Exporter shutting down (signal received)"
+    RUNNING=0
+}
+
+trap cleanup_and_exit INT TERM
+
 # Logging helper
 log_info() {
     logger -t mptcp-metrics -p daemon.info "$@"
@@ -59,10 +70,22 @@ get_signal_strength() {
     local signal_quality="N/A"
 
     # Check if this is a cellular modem interface
-    if ! echo "$iface" | grep -q "wwan"; then
-        echo "$signal_strength|$signal_quality"
-        return
-    fi
+    # Match wwan*, usb* with QMI/MBIM, or interfaces with modem-like names
+    case "$iface" in
+        wwan*|rmnet*|wwp*) ;;  # Common cellular patterns
+        usb*)
+            # Check if it's actually a cellular modem by checking UCI config
+            local proto=$(uci get network.${iface}.proto 2>/dev/null)
+            case "$proto" in
+                qmi|mbim) ;;
+                *) echo "$signal_strength|$signal_quality"; return ;;
+            esac
+            ;;
+        *)
+            echo "$signal_strength|$signal_quality"
+            return
+            ;;
+    esac
 
     # Try to find the modem device
     local qmi_device=""
@@ -184,7 +207,9 @@ export_summary() {
         echo "# Format: iface|state|loss_rate|throughput_rx|throughput_tx|signal|speed"
         echo "#"
 
-        for iface in $(ls /sys/class/net/ 2>/dev/null); do
+        for iface_path in /sys/class/net/*; do
+            [ -e "$iface_path" ] || continue
+            local iface=$(basename "$iface_path")
             if is_wan_interface "$iface"; then
                 if [ -f "$EXPORT_DIR/${iface}.current" ]; then
                     local state=$(cat /sys/class/net/$iface/operstate 2>/dev/null)
@@ -205,8 +230,10 @@ export_summary() {
 # Main loop
 log_info "MPTCP Metrics Exporter starting (export_interval: ${EXPORT_INTERVAL}s)"
 
-while true; do
-    for iface in $(ls /sys/class/net/ 2>/dev/null); do
+while [ "$RUNNING" -eq 1 ]; do
+    for iface_path in /sys/class/net/*; do
+        [ -e "$iface_path" ] || continue
+        iface=$(basename "$iface_path")
         if is_wan_interface "$iface"; then
             export_interface_metrics "$iface"
         fi
@@ -215,3 +242,5 @@ while true; do
     export_summary
     sleep "$EXPORT_INTERVAL"
 done
+
+log_info "MPTCP Metrics Exporter stopped"

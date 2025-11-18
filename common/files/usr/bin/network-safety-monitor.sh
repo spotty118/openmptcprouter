@@ -9,6 +9,11 @@
 
 set -u  # Catch undefined variables
 
+# Source network helper library for safe UCI operations
+if [ -f /usr/lib/omr/omr-network.sh ]; then
+    . /usr/lib/omr/omr-network.sh
+fi
+
 LOG_TAG="network-safety"
 CHECK_INTERVAL=30  # Check every 30 seconds
 EMERGENCY_PORT_FILE="/var/run/emergency-port"
@@ -132,10 +137,10 @@ check_interface_ips() {
 
 # Emergency recovery - create a working LAN
 emergency_recovery() {
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
     log_msg "EMERGENCY RECOVERY ACTIVATED"
     log_msg "User locked out - restoring LAN access"
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
 
     # Find any available physical port
     local emergency_port=""
@@ -143,13 +148,24 @@ emergency_recovery() {
     # PERF OPTIMIZATION: Pre-build WAN device list to avoid O(N×M) nested loop
     # Reduces complexity from O(N×M) to O(N+M) - 2-10x faster
     local wan_devices=""
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
-        local wan_device
-        wan_device=$(uci -q get "network.$wan.device")
-        if [ -n "$wan_device" ]; then
-            wan_devices="$wan_devices $wan_device "
-        fi
-    done
+    # Use helper library if available, fallback to grep/cut
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        for wan in $(get_wan_interfaces); do
+            local wan_device
+            wan_device=$(uci -q get "network.$wan.device")
+            if [ -n "$wan_device" ]; then
+                wan_devices="$wan_devices $wan_device "
+            fi
+        done
+    else
+        for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+            local wan_device
+            wan_device=$(uci -q get "network.$wan.device")
+            if [ -n "$wan_device" ]; then
+                wan_devices="$wan_devices $wan_device "
+            fi
+        done
+    fi
 
     # Try to find a port not assigned to WAN
     for iface in /sys/class/net/eth* /sys/class/net/lan*; do
@@ -175,14 +191,21 @@ emergency_recovery() {
     
     # If all ports are WANs, take the last WAN port back
     if [ -z "$emergency_port" ]; then
-        for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | tail -n 1); do
-            emergency_port=$(uci -q get network.$wan.device)
+        local last_wan=""
+        # Use helper library if available
+        if type get_wan_interfaces >/dev/null 2>&1; then
+            last_wan=$(get_wan_interfaces | awk '{print $NF}')
+        else
+            last_wan=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | tail -n 1)
+        fi
+
+        if [ -n "$last_wan" ]; then
+            emergency_port=$(uci -q get "network.$last_wan.device")
             if [ -n "$emergency_port" ]; then
                 log_msg "Taking WAN port $emergency_port for emergency LAN access"
-                uci delete network.$wan
-                break
+                uci delete "network.$last_wan"
             fi
-        done
+        fi
     fi
     
     if [ -z "$emergency_port" ]; then
@@ -263,13 +286,13 @@ emergency_recovery() {
         return 1
     fi
 
-    log_msg "═══════════════════════════════════════════════════"
-    log_msg "✓ EMERGENCY RECOVERY COMPLETE"
+    log_msg "==================================================="
+    log_msg "[OK] EMERGENCY RECOVERY COMPLETE"
     log_msg "  LAN restored on port: $emergency_port"
     log_msg "  LAN IP: 192.168.2.1 (verified, static)"
     log_msg "  Access router at: http://192.168.2.1"
     log_msg "  Please reconfigure your network via web UI"
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
 
     return 0
 }
@@ -289,7 +312,7 @@ fix_lan_protocol() {
         
         /etc/init.d/network reload
         
-        log_msg "✓ LAN fixed to static IP"
+        log_msg "[OK] LAN fixed to static IP"
     fi
 }
 

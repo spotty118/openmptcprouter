@@ -209,9 +209,10 @@ net.mptcp.mptcp_checksum = 0
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2/BBR Congestion Control
-# Actual algorithm selected at runtime below (detects BBR2, falls back to BBR, then CUBIC)
-# Use FQ qdisc for optimal BBR performance
+# BBR Congestion Control (works with fq qdisc for optimal performance)
+# Note: Change to bbr2 if your kernel supports it (5.10+ with patches)
+# sysctl doesn't support automatic fallback, so we use BBR for wider compatibility
+net.ipv4.tcp_congestion_control = bbr
 net.core.default_qdisc = fq
 
 # Network Performance Tuning - Balanced for Multi-WAN
@@ -273,7 +274,8 @@ net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_frto = 2
 net.ipv4.tcp_early_retrans = 3
 net.ipv4.tcp_mtu_probing = 1
-# MSS clamping - match client value for tunnel overhead
+# MSS clamping - match client value (1400) for tunnel overhead
+# 1024 was overly conservative; 1400 accounts for MPTCP overhead while maximizing throughput
 net.ipv4.tcp_base_mss = 1400
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_sack = 1
