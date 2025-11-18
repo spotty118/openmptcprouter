@@ -39,7 +39,7 @@ OMR_TARGET=${OMR_TARGET:-x86_64}
 OMR_TARGET_CONFIG="config-$OMR_TARGET"
 UPSTREAM=${UPSTREAM:-no}
 SYSLOG=${SYSLOG:-logd}
-OMR_KERNEL=${OMR_KERNEL:-5.4}
+OMR_KERNEL=${OMR_KERNEL:-6.12}
 SHORTCUT_FE=${SHORTCUT_FE:-no}
 DISABLE_FAILSAFE=${DISABLE_FAILSAFE:-no}
 OMR_RELEASE=${OMR_RELEASE:-$(git describe --tags "$(git rev-list --tags --max-count=1 2>/dev/null)" 2>/dev/null | tail -1)}
@@ -184,10 +184,6 @@ if [ "$ONLY_GET_REPO" = "yes" ]; then
 	exit 0
 fi
 rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/files" "$OMR_TARGET/${OMR_KERNEL}/source/tmp"
-#rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/target/linux/mediatek/patches-4.14"
-#rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/target/linux/mediatek/patches-5.4"
-#rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/package/boot/uboot-mediatek"
-#rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/package/boot/arm-trusted-firmware-mediatek"
 if [ "${OMR_KERNEL}" = "5.4" ]; then
 	echo "rm -rf $OMR_TARGET/${OMR_KERNEL}/source/package/boot/uboot-rockchip"
 	rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/package/boot/uboot-rockchip"
@@ -201,15 +197,6 @@ rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/package/boot/uboot-mvebu"
 [ "${OMR_KERNEL}" = "6.1" ] && {
 	rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/target/linux/bcm27xx/patches-6.1"
 }
-#[ "${OMR_KERNEL}" = "6.6" ] && {
-#	rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/package/libs/mbedtls"
-#}
-#[ "${OMR_KERNEL}" = "6.12" ] && {
-#	rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/package/libs/mbedtls"
-#}
-
-# Remove current dwarves directory to replace with fixed package
-#rm -rf "${OMR_TARGET}/${OMR_KERNEL}/source/tools/dwarves"
 
 
 [ "${OMR_KERNEL}" = "5.4" ] && rm -rf "$OMR_TARGET/${OMR_KERNEL}/source/tools/firmware-utils"
@@ -337,10 +324,6 @@ else
 	CONFIG_VERSION_NUMBER="${OMR_RELEASE}-${OMR_FEED_SRC}-$(git -C "$OMR_FEED" rev-parse --short HEAD)"
 	EOF
 fi
-#if [ "${OMR_KERNEL}" = "5.14" ]; then
-#	echo 'CONFIG_KERNEL_GIT_CLONE_URI="https://github.com/multipath-tcp/mptcp_net-next.git"' >> "$OMR_TARGET/${OMR_KERNEL}/source/.config"
-#	echo 'CONFIG_KERNEL_GIT_REF="78828adaef8fe9b69f9a8c4b60f74b01c5a31c7a"' >> "$OMR_TARGET/${OMR_KERNEL}/source/.config"
-#fi
 if [ "$OMR_ALL_PACKAGES" = "yes" ]; then
 	echo 'CONFIG_ALL=y' >> "$OMR_TARGET/${OMR_KERNEL}/source/.config"
 	echo 'CONFIG_ALL_NONSHARED=y' >> "$OMR_TARGET/${OMR_KERNEL}/source/.config"
@@ -496,25 +479,6 @@ fi
 
 cd "$OMR_TARGET/${OMR_KERNEL}/source"
 
-#if [ "$OMR_UEFI" = "yes" ] && [ "$OMR_TARGET" = "x86_64" ]; then 
-#	echo "Checking if UEFI patch is set or not"
-#	if [ "$(grep 'EFI_IMAGES' target/linux/x86/image/Makefile)" = "" ]; then
-#		patch -N -p1 -s < ../../../patches/uefi.patch
-#	fi
-#	echo "Done"
-#else
-#	if [ "$(grep 'EFI_IMAGES' target/linux/x86/image/Makefile)" != "" ]; then
-#		patch -N -R -p1 -s < ../../../patches/uefi.patch
-#	fi
-#fi
-
-#if [ "$OMR_TARGET" = "x86_64" ]; then 
-#	echo "Checking if Hyper-V patch is set or not"
-#	if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/images.patch; then
-#		patch -N -p1 -s < ../../../patches/images.patch
-#	fi
-#	echo "Done"
-#fi
 
 if [ "$OMR_KERNEL" != "6.6" ] && [ "$OMR_KERNEL" != "6.10" ] && [ "$OMR_KERNEL" != "6.11" ] && [ "$OMR_KERNEL" != "6.12" ] && [ "$OMR_KERNEL" != "6.17" ]; then
 	echo "Checking if No check patch is set or not"
@@ -545,12 +509,6 @@ if [ "$OMR_KERNEL" = "5.4" ] && ! patch -Rf -N -p1 -s --dry-run < ../../../patch
 fi
 echo "Done"
 
-#echo "Checking if remove_abi patch is set or not"
-#if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/remove_abi.patch; then
-#	echo "apply..."
-#	patch -N -p1 -s < ../../../patches/remove_abi.patch
-#fi
-#echo "Done"
 
 # Add BBR2 patch, only working on 64bits images for now
 if ([ "$OMR_KERNEL" = "5.4" ] || [ "$OMR_KERNEL" = "5.4" ]) && ([ "$OMR_TARGET" = "x86_64" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "rpi4" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "rpi3" ]); then
@@ -569,38 +527,6 @@ if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/smsc75xx.patch; then
 fi
 echo "Done"
 
-#echo "Checking if ipt-nat patch is set or not"
-#if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/ipt-nat6.patch; then
-#	echo "apply..."
-#	patch -N -p1 -s < ../../../patches/ipt-nat6.patch
-#fi
-#echo "Done"
-
-#echo "Checking if mvebu patch is set or not"
-#if [ ! -d target/linux/mvebu/patches-5.4 ]; then
-#	echo "apply..."
-#	patch -N -p1 -s < ../../../patches/mvebu-5.14.patch
-#fi
-#echo "Done"
-
-#echo "Checking if opkg install arguement too long patch is set or not"
-#if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/package-too-long.patch; then
-#	echo "apply..."
-#	patch -N -p1 -s < ../../../patches/package-too-long.patch
-#fi
-#echo "Done"
-
-#echo "Download via IPv4"
-#if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/download-ipv4.patch; then
-#	patch -N -p1 -s < ../../../patches/download-ipv4.patch
-#fi
-#echo "Done"
-
-#echo "Remove check rsync"
-#if [ "$(grep rsync include/prereq-build.mk)" != "" ]; then
-#	patch -N -p1 -s < ../../../patches/check-rsync.patch
-#fi
-#echo "Done"
 
 if [ -f target/linux/mediatek/patches-5.4/0999-hnat.patch ]; then
 	rm -f target/linux/mediatek/patches-5.4/0999-hnat.patch
@@ -617,58 +543,7 @@ if [ -f package/boot/uboot-rockchip/patches/100-rockchip-rk3328-Add-support-for-
 	rm -f package/boot/uboot-rockchip/patches/100-rockchip-rk3328-Add-support-for-FriendlyARM-NanoPi-R.patch
 fi
 
-#echo "Patch protobuf wrong hash"
-#patch -N -R -p1 -s < ../../../patches/protobuf_hash.patch
-#echo "Done"
 
-#echo "Remove gtime dependency"
-#if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/gtime.patch; then
-#	patch -N -p1 -s < ../../../patches/gtime.patch
-#fi
-#echo "Done"
-
-#if [ -f target/linux/generic/backport-5.4/370-netfilter-nf_flow_table-fix-offloaded-connection-tim.patch ]; then
-#	rm -f target/linux/generic/backport-5.4/370-netfilter-nf_flow_table-fix-offloaded-connection-tim.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/640-netfilter-nf_flow_table-add-hardware-offload-support.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/640-netfilter-nf_flow_table-add-hardware-offload-support.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/641-netfilter-nf_flow_table-support-hw-offload-through-v.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/641-netfilter-nf_flow_table-support-hw-offload-through-v.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/642-net-8021q-support-hardware-flow-table-offload.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/642-net-8021q-support-hardware-flow-table-offload.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/643-net-bridge-support-hardware-flow-table-offload.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/643-net-bridge-support-hardware-flow-table-offload.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/644-net-pppoe-support-hardware-flow-table-offload.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/644-net-pppoe-support-hardware-flow-table-offload.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/645-netfilter-nf_flow_table-rework-hardware-offload-time.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/645-netfilter-nf_flow_table-rework-hardware-offload-time.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/647-net-dsa-support-hardware-flow-table-offload.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/647-net-dsa-support-hardware-flow-table-offload.patch
-#fi
-#if [ -f target/linux/generic/hack-5.4/650-netfilter-add-xt_OFFLOAD-target.patch ]; then
-#	rm -f target/linux/generic/hack-5.4/650-netfilter-add-xt_OFFLOAD-target.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/690-net-add-support-for-threaded-NAPI-polling.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/690-net-add-support-for-threaded-NAPI-polling.patch
-#fi
-#if [ -f target/linux/generic/hack-5.4/647-netfilter-flow-acct.patch ]; then
-#	rm -f target/linux/generic/hack-5.4/647-netfilter-flow-acct.patch
-#fi
-#if [ -f target/linux/generic/hack-5.4/953-net-patch-linux-kernel-to-support-shortcut-fe.patch ]; then
-#	rm -f target/linux/generic/hack-5.4/953-net-patch-linux-kernel-to-support-shortcut-fe.patch
-#fi
-#if [ -f target/linux/bcm27xx/patches-5.4/950-1031-net-lan78xx-Ack-pending-PHY-ints-when-resetting.patch ]; then
-#	rm -f target/linux/bcm27xx/patches-5.4/950-1031-net-lan78xx-Ack-pending-PHY-ints-when-resetting.patch
-#fi
-#if [ -f target/linux/generic/pending-5.4/770-16-net-ethernet-mediatek-mtk_eth_soc-add-flow-offloadin.patch ]; then
-#	rm -f target/linux/generic/pending-5.4/770-16-net-ethernet-mediatek-mtk_eth_soc-add-flow-offloadin.patch
-#fi
 NOT_SUPPORTED="0"
 
 if [ "$OMR_KERNEL" = "5.4" ]; then
@@ -768,17 +643,7 @@ if [ "$OMR_KERNEL" = "6.1" ]; then
 	rm -rf target/linux/ipq40xx/files/drivers/net/dsa
 	rm -rf target/linux/ipq40xx/files/drivers/net/ethernet
 
-#	echo "CONFIG_DEVEL=y" >> ".config"
-#	echo "CONFIG_NEED_TOOLCHAIN=y" >> ".config"
-#	echo "CONFIG_TOOLCHAINOPTS=y" >> ".config"
-#	echo 'CONFIG_BINUTILS_VERSION_2_36_1=y' >> ".config"
-#	echo 'CONFIG_BINUTILS_VERSION="2.36.1"' >> ".config"
-#	echo "CONFIG_BINUTILS_USE_VERSION_2_36_1=y" >> ".config"
-#	#echo "CONFIG_GCC_USE_VERSION_10=y" >> ".config"
-#	#echo "CONFIG_GCC_VERSION_10=y" >> ".config"
-#	#echo 'CONFIG_GCC_VERSION="10.3.0"' >> ".config"
 	echo "CONFIG_VERSION_CODE=6.1" >> ".config"
-#	#echo "CONFIG_GCC_USE_VERSION_10=y" >> ".config"
 	if [ "$TARGET" = "bpi-r2" ]; then
 		echo "# CONFIG_VERSION_CODE_FILENAMES is not set" >> ".config"
 	fi
@@ -1041,18 +906,8 @@ else
 	cd -
 fi
 
-#cd feeds/${OMR_KERNEL}
-#if ! patch -Rf -N -p1 -s --dry-run < ../../patches/luci-unbound-logread.patch; then
-#	patch -N -p1 -s < ../../patches/luci-unbound-logread.patch
-#fi
-#cd -
-
-
 [ -d feeds/${OMR_KERNEL}/${OMR_DIST}/luci-app-statistics ] && rm -rf feeds/${OMR_KERNEL}/luci/applications/luci-app-statistics
 [ -d feeds/${OMR_KERNEL}/${OMR_DIST}/luci-proto-modemmanager ] && rm -rf feeds/${OMR_KERNEL}/luci/protocols/luci-proto-modemmanager
-#if [ -d ${OMR_FEED}/netifd ] && [ "${OMR_KERNEL}" != "5.4" ]; then
-#	rm -rf ${OMR_TARGET}/${OMR_KERNEL}/source/package/network/config/netifd
-#fi
 [ -d ${OMR_FEED}/libgpiod ] && rm -rf feeds/${OMR_KERNEL}/packages/libs/libgpiod
 [ -d ${OMR_FEED}/iperf3 ] && rm -rf feeds/${OMR_KERNEL}/packages/net/iperf3
 [ -d ${OMR_FEED}/golang ] && {
@@ -1073,11 +928,6 @@ fi
 if [ "$OMR_KERNEL" = "5.4" ] && ! patch -Rf -N -p1 -s --dry-run < ../../patches/luci-base-add_array_sort_utilities.patch; then
 	patch -N -p1 -s < ../../patches/luci-base-add_array_sort_utilities.patch
 fi
-#if [ -d luci/modules/luci-mod-status ]; then
-#	if ! patch -Rf -N -p1 -s --dry-run < ../../patches/luci-nftables.patch; then
-#		patch -N -p1 -s < ../../patches/luci-nftables.patch
-#	fi
-#fi
 
 cd ../..
 [ -d $OMR_FEED/luci-base/po/oc ] && cp -rf $OMR_FEED/luci-base/po/oc feeds/${OMR_KERNEL}/luci/modules/luci-base/po/
@@ -1088,15 +938,6 @@ echo "Update feeds index"
 cp .config .config.keep
 scripts/feeds clean
 scripts/feeds update -a
-
-#cd -
-#echo "Checking if fullconenat-luci patch is set or not"
-##if ! patch -Rf -N -p1 -s --dry-run < patches/fullconenat-luci.patch; then
-#	echo "apply..."
-#	patch -N -p1 -s < patches/fullconenat-luci.patch
-#fi
-#echo "Done"
-#cd "$OMR_TARGET/${OMR_KERNEL}/source"
 
 if [ "$OMR_ALL_PACKAGES" = "yes" ]; then
 	scripts/feeds install -a -d m -p packages

@@ -316,16 +316,10 @@ net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 
 # MPTCP Configuration - Enhanced for Multi-WAN Bonding
-# Compatible with both MPTCP v0 (legacy) and v1 (upstream kernel 5.10+)
+# Using MPTCP v1 (upstream kernel 5.10+)
 net.mptcp.enabled = 1
 net.mptcp.checksum_enabled = 0
 net.mptcp.allow_join_initial_addr_port = 1
-# Legacy parameters for older kernels (ignored on modern kernels)
-net.mptcp.mptcp_enabled = 1
-net.mptcp.mptcp_checksum = 0
-net.mptcp.mptcp_syn_retries = 3
-net.mptcp.mptcp_path_manager = fullmesh
-net.mptcp.mptcp_scheduler = default
 
 # BBR Congestion Control (fq qdisc required for optimal BBR performance)
 # Actual algorithm selected at runtime below (detects BBR2, falls back to BBR, then CUBIC)
