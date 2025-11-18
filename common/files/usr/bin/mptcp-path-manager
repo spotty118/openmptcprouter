@@ -12,8 +12,6 @@ HYSTERESIS_TIME=30        # Require 30 seconds of stability before marking path 
 CHECK_INTERVAL=5          # Check every 5 seconds
 STATE_DIR="/var/run/mptcp-paths"
 METRICS_DIR="/var/run/mptcp-metrics"
-LOCK_FILE="/var/run/mptcp-path-manager.lock"
-PID_FILE="/var/run/mptcp-path-manager.pid"
 
 # Blacklisting parameters
 BLACKLIST_THRESHOLD=5     # 5 failures in observation window triggers blacklist
@@ -21,7 +19,7 @@ BLACKLIST_WINDOW=300      # 5-minute observation window
 BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
-METRICS_MAX_AGE=60        # Ignore metrics older than 60 seconds
+CONNECTIVITY_CHECK_TIMEOUT=2  # Timeout for connectivity checks in seconds
 
 # Metric bounds
 METRIC_MIN=1
@@ -33,75 +31,13 @@ mkdir -p "$METRICS_DIR"
 # Track if we should continue running
 RUNNING=1
 
-# Single-instance enforcement using atomic mkdir
-acquire_lock() {
-    if mkdir "$LOCK_FILE" 2>/dev/null; then
-        echo $$ > "$PID_FILE"
-        return 0
-    fi
-
-    # Check if existing process is still running
-    if [ -f "$PID_FILE" ]; then
-        local old_pid=$(cat "$PID_FILE" 2>/dev/null)
-        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
-            return 1  # Another instance is running
-        fi
-        # Stale lock - clean up and retry
-        rm -rf "$LOCK_FILE"
-        if mkdir "$LOCK_FILE" 2>/dev/null; then
-            echo $$ > "$PID_FILE"
-            return 0
-        fi
-    fi
-    return 1
-}
-
-release_lock() {
-    rm -f "$PID_FILE"
-    rm -rf "$LOCK_FILE"
-}
-
-# Signal handlers for clean shutdown
+# Signal handlers for graceful shutdown
 cleanup_and_exit() {
-    log_info "MPTCP Path Manager shutting down (PID: $$)"
+    log_info "MPTCP Path Manager shutting down (signal received)"
     RUNNING=0
-    release_lock
 }
 
-trap cleanup_and_exit INT TERM HUP QUIT
-
-# Clean up orphaned state files on startup
-cleanup_stale_state() {
-    local now=$(date +%s)
-
-    # Remove blacklist files older than 2x blacklist duration (stale)
-    for bl_file in "$STATE_DIR"/*.blacklist; do
-        [ -f "$bl_file" ] || continue
-        local bl_time=$(cat "$bl_file" 2>/dev/null || echo 0)
-        local age=$((now - bl_time))
-        if [ "$age" -gt $((BLACKLIST_DURATION * 2)) ]; then
-            local iface=$(basename "$bl_file" .blacklist)
-            log_info "Cleaning stale blacklist for $iface (age: ${age}s)"
-            rm -f "$bl_file"
-            rm -f "$STATE_DIR/${iface}.penalty_blacklist"
-        fi
-    done
-
-    # Remove state files for interfaces that no longer exist
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local filename=$(basename "$state_file")
-        local iface="${filename%%.*}"
-        # Skip penalty and lock files
-        case "$filename" in
-            *.tmp.*|*.lock) continue ;;
-        esac
-        if [ ! -d "/sys/class/net/$iface" ]; then
-            log_info "Cleaning state for removed interface: $iface"
-            rm -f "$STATE_DIR/${iface}"*
-        fi
-    done
-}
+trap cleanup_and_exit INT TERM
 
 # Logging helper
 log_info() {
@@ -370,18 +306,44 @@ remove_metric_penalty() {
     return 0
 }
 
+# Check actual connectivity (not just link state)
+# Returns 0 if interface has actual connectivity, 1 otherwise
+check_actual_connectivity() {
+    local iface=$1
+
+    # Get the gateway for this interface
+    local gateway=$(ip route show dev "$iface" 2>/dev/null | grep "default" | awk '{print $3}' | head -1)
+
+    # If no default route, try to get any gateway
+    if [ -z "$gateway" ]; then
+        gateway=$(ip route show dev "$iface" 2>/dev/null | grep "via" | awk '{print $3}' | head -1)
+    fi
+
+    # If still no gateway, check if interface at least has an IP
+    if [ -z "$gateway" ]; then
+        local iface_ip=$(ip -4 addr show dev "$iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
+        if [ -z "$iface_ip" ]; then
+            return 1  # No IP, no connectivity
+        fi
+        # Has IP but no gateway - might be point-to-point, consider it up
+        return 0
+    fi
+
+    # Ping the gateway with timeout
+    if ping -c 1 -W "$CONNECTIVITY_CHECK_TIMEOUT" -I "$iface" "$gateway" >/dev/null 2>&1; then
+        return 0  # Gateway reachable
+    fi
+
+    return 1  # Gateway not reachable
+}
+
 # FIX 2.1: Check path recovery with hysteresis
+# ENHANCED: Now checks actual connectivity, not just link state
 check_path_recovery() {
     local iface=$1
     local now=$2
 
-    # Validate interface exists before reading state
-    local state_path="/sys/class/net/$iface/operstate"
-    if [ ! -f "$state_path" ]; then
-        return
-    fi
-
-    local oper_state=$(cat "$state_path" 2>/dev/null)
+    local oper_state=$(cat /sys/class/net/$iface/operstate 2>/dev/null)
     [ -z "$oper_state" ] && return
 
     # Read current state
@@ -391,8 +353,22 @@ EOF
 
     case "$oper_state" in
         up)
-            # Path is operationally up
-            if [ "$failure_count" -gt 0 ]; then
+            # Path is operationally up - but verify actual connectivity
+            local has_connectivity=1
+            if ! check_actual_connectivity "$iface"; then
+                has_connectivity=0
+                # Interface is "up" but no actual connectivity - treat as soft failure
+                if [ "$failure_count" -eq 0 ]; then
+                    # First detection of connectivity loss
+                    last_failure=$now
+                    failure_count=1
+                    recovery_start=0
+                    log_warn "Path $iface UP but NO CONNECTIVITY (gateway unreachable)"
+                    write_path_state "$iface" "$last_failure" "$recovery_start" "$failure_count"
+                fi
+            fi
+
+            if [ "$failure_count" -gt 0 ] && [ "$has_connectivity" -eq 1 ]; then
                 if [ "$recovery_start" -eq 0 ]; then
                     # Just came back - start recovery timer
                     recovery_start=$now
@@ -467,30 +443,9 @@ check_path_degradation() {
         return
     fi
 
-    # Read metrics line
+    # Read loss rate from metrics
     # Format: iface|timestamp|rx_packets|tx_packets|rx_bytes|tx_bytes|rx_errors|tx_errors|loss_rate|signal_strength
-    local metrics_line=$(cat "$metrics_file" 2>/dev/null)
-    if [ -z "$metrics_line" ]; then
-        return
-    fi
-
-    # Extract timestamp and check staleness
-    local metrics_timestamp=$(echo "$metrics_line" | awk -F'|' '{print $2}')
-    local now=$(date +%s)
-    if [ -n "$metrics_timestamp" ] && [ "$metrics_timestamp" -gt 0 ] 2>/dev/null; then
-        local metrics_age=$((now - metrics_timestamp))
-        if [ "$metrics_age" -gt "$METRICS_MAX_AGE" ]; then
-            # Metrics are stale - don't trust them
-            if is_degraded "$iface"; then
-                log_warn "Stale metrics for $iface (age: ${metrics_age}s > ${METRICS_MAX_AGE}s) - clearing degraded state"
-                rm -f "$STATE_DIR/${iface}.degraded"
-                remove_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "stale metrics cleared" "degraded"
-            fi
-            return
-        fi
-    fi
-
-    local loss_rate=$(echo "$metrics_line" | awk -F'|' '{print $9}')
+    local loss_rate=$(awk -F'|' '{print $9}' "$metrics_file")
 
     if [ -z "$loss_rate" ] || [ "$loss_rate" = "N/A" ]; then
         return
@@ -516,27 +471,11 @@ check_path_degradation() {
     fi
 }
 
-# Clean up stale state files for interfaces that no longer exist
-cleanup_stale_states() {
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local basename=$(basename "$state_file")
-        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
-        case "$basename" in
-            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
-        esac
-        # Check if interface still exists
-        if [ ! -e "/sys/class/net/$basename" ]; then
-            log_info "Cleaning up stale state for removed interface: $basename"
-            rm -f "$STATE_DIR/${basename}"*
-        fi
-    done
-}
-
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
+    # Use glob directly instead of ls for efficiency and POSIX compliance
     for iface_path in /sys/class/net/*; do
         [ -e "$iface_path" ] || continue
         local iface=$(basename "$iface_path")
@@ -548,38 +487,26 @@ monitor_paths() {
     done
 }
 
-# Main entry point
-main() {
-    # Acquire lock - exit if another instance is running
-    if ! acquire_lock; then
-        echo "Another instance of MPTCP Path Manager is already running" >&2
-        exit 1
+# Main monitoring loop
+log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
+
+# Initial cleanup of stale state files from previous runs
+cleanup_stale_states
+
+CLEANUP_COUNTER=0
+CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
+
+while [ "$RUNNING" -eq 1 ]; do
+    monitor_paths
+
+    # Periodic cleanup of stale states
+    CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
+    if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
+        cleanup_stale_states
+        CLEANUP_COUNTER=0
     fi
 
-    log_info "MPTCP Path Manager starting (PID: $$, hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
+    sleep "$CHECK_INTERVAL"
+done
 
-    # Initial cleanup of stale state files from previous runs
-    cleanup_stale_state
-    cleanup_stale_states
-
-    CLEANUP_COUNTER=0
-    CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
-
-    while [ "$RUNNING" -eq 1 ]; do
-        monitor_paths
-
-        # Periodic cleanup of stale states
-        CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
-        if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
-            cleanup_stale_states
-            CLEANUP_COUNTER=0
-        fi
-
-        sleep "$CHECK_INTERVAL"
-    done
-
-    log_info "MPTCP Path Manager stopped"
-}
-
-# Run main
-main
+log_info "MPTCP Path Manager stopped"
