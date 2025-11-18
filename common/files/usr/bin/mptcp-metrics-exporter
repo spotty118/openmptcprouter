@@ -79,9 +79,21 @@ get_signal_strength() {
             ;;
     esac
 
+    # Helper function to run command with timeout (fallback if timeout not available)
+    run_with_timeout() {
+        local secs=$1
+        shift
+        if command -v timeout >/dev/null 2>&1; then
+            timeout "$secs" "$@"
+        else
+            # Fallback: run without timeout (less safe but functional)
+            "$@"
+        fi
+    }
+
     # Try QMI
     if [ -n "$qmi_device" ] && [ -c "$qmi_device" ] && command -v uqmi >/dev/null 2>&1; then
-        local signal_info=$(timeout 2 uqmi -d "$qmi_device" --get-signal-info 2>/dev/null)
+        local signal_info=$(run_with_timeout 2 uqmi -d "$qmi_device" --get-signal-info 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$signal_info" ]; then
             # Try to extract RSSI and RSRP
             if command -v jsonfilter >/dev/null 2>&1; then
@@ -93,7 +105,7 @@ get_signal_strength() {
 
     # Try MBIM if QMI failed
     if [ "$signal_strength" = "N/A" ] && [ -n "$mbim_device" ] && [ -c "$mbim_device" ] && command -v umbim >/dev/null 2>&1; then
-        local signal_info=$(timeout 2 umbim -d "$mbim_device" -n signal 2>/dev/null)
+        local signal_info=$(run_with_timeout 2 umbim -d "$mbim_device" -n signal 2>/dev/null)
         if [ $? -eq 0 ] && [ -n "$signal_info" ]; then
             signal_strength=$(echo "$signal_info" | awk '/rssi/ {print $2}')
         fi
@@ -131,13 +143,20 @@ export_interface_metrics() {
         # Read previous values
         IFS='|' read -r _ prev_ts prev_rx_packets prev_tx_packets prev_rx_bytes prev_tx_bytes prev_rx_errors prev_tx_errors _ _ _ _ _ _ _ prev_rx_dropped prev_tx_dropped < "$prev_file"
 
-        # Calculate deltas
+        # Calculate deltas with overflow protection
         local packets_delta=$((rx_packets - prev_rx_packets))
         local errors_delta=$((rx_errors - prev_rx_errors))
         local dropped_delta=$((rx_dropped - ${prev_rx_dropped:-0}))
         local time_delta=$((now - prev_ts))
         local rx_bytes_delta=$((rx_bytes - prev_rx_bytes))
         local tx_bytes_delta=$((tx_bytes - prev_tx_bytes))
+
+        # Handle counter wraparound (32-bit counters can wrap)
+        [ "$packets_delta" -lt 0 ] && packets_delta=0
+        [ "$errors_delta" -lt 0 ] && errors_delta=0
+        [ "$dropped_delta" -lt 0 ] && dropped_delta=0
+        [ "$rx_bytes_delta" -lt 0 ] && rx_bytes_delta=0
+        [ "$tx_bytes_delta" -lt 0 ] && tx_bytes_delta=0
 
         # Calculate loss rate in basis points (0.01%)
         # Include both errors and drops for accurate loss measurement
@@ -147,6 +166,7 @@ export_interface_metrics() {
         fi
 
         # Calculate throughput in bytes per second
+        # Guard against division by zero and very small time deltas
         if [ "$time_delta" -gt 0 ]; then
             throughput_rx=$((rx_bytes_delta / time_delta))
             throughput_tx=$((tx_bytes_delta / time_delta))

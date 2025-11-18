@@ -23,6 +23,27 @@ log_info() {
     logger -t mptcp-path -p daemon.info "$@"
 }
 
+# Clean up stale state files for interfaces that no longer exist
+cleanup_stale_states() {
+    for state_file in "$STATE_DIR"/*; do
+        [ -f "$state_file" ] || continue
+        local basename=$(basename "$state_file")
+        # Extract interface name (remove .blacklist, .degraded, .penalty_* suffixes)
+        local iface=$(echo "$basename" | sed 's/\.\(blacklist\|degraded\|penalty_.*\|tmp\..*\)$//')
+
+        # Skip temp files
+        case "$basename" in
+            *.tmp.*) continue ;;
+        esac
+
+        # Check if interface still exists
+        if [ ! -e "/sys/class/net/$iface" ]; then
+            log_info "Cleaning up stale state for removed interface: $iface"
+            rm -f "$STATE_DIR/${iface}"*
+        fi
+    done
+}
+
 log_warn() {
     logger -t mptcp-path -p daemon.warning "$@"
 }
@@ -224,8 +245,13 @@ remove_metric_penalty() {
 
         if [ -n "$uci_section" ]; then
             current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
+            # Guard against underflow - ensure we don't go below minimum usable metric
+            local min_metric=10
             local new_metric=$((current_metric - penalty))
-            [ "$new_metric" -lt 1 ] && new_metric=1
+            if [ "$new_metric" -lt "$min_metric" ]; then
+                new_metric=$min_metric
+                log_warn "Metric underflow prevented for $iface: clamped to $min_metric"
+            fi
             uci set network.${uci_section}.metric="$new_metric"
             uci commit network
             mark_penalty_removed "$iface" "$penalty_type"
@@ -233,8 +259,13 @@ remove_metric_penalty() {
             return 0
         fi
     else
+        # Guard against underflow
+        local min_metric=10
         local new_metric=$((current_metric - penalty))
-        [ "$new_metric" -lt 1 ] && new_metric=1
+        if [ "$new_metric" -lt "$min_metric" ]; then
+            new_metric=$min_metric
+            log_warn "Metric underflow prevented for $iface: clamped to $min_metric"
+        fi
         uci set network.${iface}.metric="$new_metric"
         uci commit network
         mark_penalty_removed "$iface" "$penalty_type"
@@ -380,7 +411,21 @@ monitor_paths() {
 # Main monitoring loop
 log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
 
+# Initial cleanup of stale state files from previous runs
+cleanup_stale_states
+
+# Counter for periodic cleanup (every 60 checks = 5 minutes at 5s interval)
+cleanup_counter=0
+
 while true; do
     monitor_paths
+
+    # Periodic cleanup of stale states (in case interfaces were removed)
+    cleanup_counter=$((cleanup_counter + 1))
+    if [ "$cleanup_counter" -ge 60 ]; then
+        cleanup_stale_states
+        cleanup_counter=0
+    fi
+
     sleep "$CHECK_INTERVAL"
 done
