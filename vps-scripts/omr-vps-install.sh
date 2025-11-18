@@ -516,7 +516,10 @@ echo -e "${YELLOW}Keep this file secure as it contains all your passwords!${NC}"
 echo ""
 
 # Save credentials to file for later reference
-cat > /root/openmptcprouter_credentials.txt << ENDCREDS
+# Use subshell with umask to create file with secure permissions from the start
+(
+    umask 077
+    cat > /root/openmptcprouter_credentials.txt << ENDCREDS
 OpenMPTCProuter Optimized - VPS Credentials
 ============================================
 Installation Date: $(date)
@@ -550,8 +553,7 @@ On your router:
 5. Encryption: Shadowsocks (chacha20-ietf-poly1305)
 6. Save & Apply
 ENDCREDS
-
-chmod 600 /root/openmptcprouter_credentials.txt
+)
 
 echo -e "${GREEN}Credentials also saved to: ${YELLOW}/root/openmptcprouter_credentials.txt${NC}"
 echo ""
