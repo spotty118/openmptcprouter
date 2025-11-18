@@ -105,8 +105,19 @@ case "$OMR_PACKAGES" in
 esac
 
 # Validate boolean-like parameters
-for param_name in OMR_KEEPBIN OMR_IMG OMR_LOG OMR_ALL_PACKAGES SHORTCUT_FE DISABLE_FAILSAFE; do
-    eval param_value=\$$param_name
+# SECURITY: Using indirect variable expansion safely without command injection risk
+validate_bool_param() {
+    local param_name="$1"
+    local param_value
+    case "$param_name" in
+        OMR_KEEPBIN) param_value="$OMR_KEEPBIN" ;;
+        OMR_IMG) param_value="$OMR_IMG" ;;
+        OMR_LOG) param_value="$OMR_LOG" ;;
+        OMR_ALL_PACKAGES) param_value="$OMR_ALL_PACKAGES" ;;
+        SHORTCUT_FE) param_value="$SHORTCUT_FE" ;;
+        DISABLE_FAILSAFE) param_value="$DISABLE_FAILSAFE" ;;
+        *) echo "ERROR: Unknown parameter: $param_name"; exit 1 ;;
+    esac
     case "$param_value" in
         yes|no)
             ;;
@@ -116,6 +127,10 @@ for param_name in OMR_KEEPBIN OMR_IMG OMR_LOG OMR_ALL_PACKAGES SHORTCUT_FE DISAB
             exit 1
             ;;
     esac
+}
+
+for param_name in OMR_KEEPBIN OMR_IMG OMR_LOG OMR_ALL_PACKAGES SHORTCUT_FE DISABLE_FAILSAFE; do
+    validate_bool_param "$param_name"
 done
 
 echo "✓ Build parameters validated"

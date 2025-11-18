@@ -204,7 +204,12 @@ emergency_recovery() {
             emergency_port=$(uci -q get "network.$last_wan.device")
             if [ -n "$emergency_port" ]; then
                 log_msg "Taking WAN port $emergency_port for emergency LAN access"
-                uci delete "network.$last_wan"
+                # SAFETY: Check delete succeeds before continuing
+                if ! uci delete "network.$last_wan" 2>/dev/null; then
+                    log_msg "WARNING: Failed to delete interface $last_wan, continuing anyway"
+                fi
+            else
+                log_msg "WARNING: Could not get device for interface $last_wan"
             fi
         fi
     fi

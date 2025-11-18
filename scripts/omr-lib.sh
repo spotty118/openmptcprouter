@@ -314,7 +314,13 @@ omr_download_with_retry() {
 
     while [ "$retry" -lt "$max_retries" ]; do
         if curl -sSL --connect-timeout 10 --max-time 120 "$url" -o "$output" 2>/dev/null; then
-            return 0
+            # Verify download was successful and file is not empty
+            if [ -s "$output" ]; then
+                return 0
+            else
+                omr_log_warning "Downloaded file is empty"
+                rm -f "$output" 2>/dev/null
+            fi
         fi
         retry=$((retry + 1))
         if [ "$retry" -lt "$max_retries" ]; then
@@ -481,6 +487,74 @@ omr_restart_service_safe() {
 }
 
 #
+# String/Security utility functions
+#
+
+omr_mask_password() {
+    # Mask a password for display without exposing it in process listing
+    # Usage: masked=$(omr_mask_password "$password")
+    local password="$1"
+    printf '%*s' "${#password}" | tr ' ' '*'
+}
+
+omr_escape_sed() {
+    # Escape special characters for use in sed replacement
+    # Usage: safe=$(omr_escape_sed "$unsafe_string")
+    local string="$1"
+    printf '%s' "$string" | sed -e 's/[&/\]/\\&/g'
+}
+
+omr_generate_password() {
+    # Generate a random password
+    # Usage: password=$(omr_generate_password [length])
+    local length="${1:-32}"
+    head -c "$length" /dev/urandom | base64 -w0 | tr -d '/+=' | head -c "$length"
+}
+
+omr_generate_hex() {
+    # Generate random hex string
+    # Usage: hex=$(omr_generate_hex [bytes])
+    local bytes="${1:-32}"
+    od -vN "$bytes" -An -tx1 /dev/urandom | tr '[:lower:]' '[:upper:]' | tr -d " \n"
+}
+
+#
+# Network interface detection
+#
+
+omr_get_wan_interfaces() {
+    # Get list of WAN network interfaces (DHCP or static)
+    # Usage: interfaces=$(omr_get_wan_interfaces)
+    # Returns: space-separated list of interface names
+    if ! command -v uci >/dev/null 2>&1; then
+        return 1
+    fi
+    uci show network 2>/dev/null | \
+        grep -E "network\\..*\\.proto='(dhcp|static)'" | \
+        grep -v loopback | \
+        cut -d. -f2 | \
+        sort -u
+}
+
+omr_count_wan_interfaces() {
+    # Count WAN interfaces
+    # Usage: count=$(omr_count_wan_interfaces)
+    local interfaces
+    interfaces=$(omr_get_wan_interfaces) || return 1
+    if [ -z "$interfaces" ]; then
+        echo "0"
+    else
+        echo "$interfaces" | wc -l | tr -d ' '
+    fi
+}
+
+omr_get_default_interface() {
+    # Get the default network interface
+    # Usage: iface=$(omr_get_default_interface)
+    ip -o -4 route show to default 2>/dev/null | awk '{print $5}' | head -n1
+}
+
+#
 # Utility functions
 #
 
@@ -594,16 +668,34 @@ omr_print_summary() {
 #
 
 omr_load_defaults() {
-    # Default values (can be overridden)
+    # Port defaults
     : "${OMR_SHADOWSOCKS_PORT:=65500}"
     : "${OMR_GLORYTUN_TCP_PORT:=65510}"
     : "${OMR_GLORYTUN_UDP_PORT:=65520}"
     : "${OMR_WEB_UI_PORT:=8080}"
     : "${OMR_PAIRING_PORT:=9999}"
+    : "${OMR_SS_LOCAL_PORT:=1100}"
+
+    # Network defaults
     : "${OMR_LAN_IP:=192.168.2.1}"
     : "${OMR_LAN_NETMASK:=255.255.255.0}"
     : "${OMR_DHCP_START:=100}"
     : "${OMR_DHCP_LIMIT:=150}"
+
+    # Timeout/retry defaults
+    : "${OMR_CURL_CONNECT_TIMEOUT:=10}"
+    : "${OMR_CURL_MAX_TIME:=60}"
+    : "${OMR_SS_TIMEOUT:=600}"
+    : "${OMR_MAX_RETRIES:=4}"
+    : "${OMR_RETRY_DELAY_BASE:=2}"
+
+    # Encryption defaults
+    : "${OMR_SS_METHOD:=chacha20-ietf-poly1305}"
+    : "${OMR_MPTCP_PATH_MANAGER:=fullmesh}"
+    : "${OMR_MPTCP_SCHEDULER:=default}"
+
+    # Disk space requirements (KB)
+    : "${OMR_MIN_DISK_SPACE_KB:=$((30 * 1024 * 1024))}"  # 30GB
 
     # Export for use in scripts
     export OMR_SHADOWSOCKS_PORT

@@ -94,12 +94,15 @@ if [ -z "$VPS_IP" ] || [ -z "$VPS_PASSWORD" ]; then
 fi
 
 echo ""
+# SECURITY FIX: Mask password without exposing it in process listing
+masked_password=$(printf '%*s' "${#VPS_PASSWORD}" | tr ' ' '*')
+
 echo -e "${GREEN}╔════════════════════════════════════════╗${NC}"
 echo -e "${GREEN}║  Configuration Summary                 ║${NC}"
 echo -e "${GREEN}╠════════════════════════════════════════╣${NC}"
 echo -e "${GREEN}║${NC} VPS IP:      ${YELLOW}$VPS_IP${NC}"
 echo -e "${GREEN}║${NC} VPS Port:    ${YELLOW}$VPS_PORT${NC}"
-echo -e "${GREEN}║${NC} Password:    ${YELLOW}$(echo "$VPS_PASSWORD" | sed 's/./*/g')${NC}"
+echo -e "${GREEN}║${NC} Password:    ${YELLOW}${masked_password}${NC}"
 echo -e "${GREEN}║${NC} Encryption:  ${YELLOW}Shadowsocks${NC}"
 echo -e "${GREEN}╚════════════════════════════════════════╝${NC}"
 echo ""
@@ -127,8 +130,14 @@ echo -e "${CYAN}[2/6]${NC} Configuring Shadowsocks client..."
 # Install shadowsocks-libev if not present
 if ! opkg list-installed | grep -q shadowsocks-libev; then
     echo "      Installing shadowsocks-libev..."
-    opkg update > /dev/null 2>&1
-    opkg install shadowsocks-libev-ss-redir shadowsocks-libev-ss-local > /dev/null 2>&1
+    if ! opkg update > /dev/null 2>&1; then
+        echo -e "${YELLOW}      Warning: opkg update failed, attempting install anyway...${NC}"
+    fi
+    if ! opkg install shadowsocks-libev-ss-redir shadowsocks-libev-ss-local > /dev/null 2>&1; then
+        echo -e "${RED}      Error: Failed to install shadowsocks-libev${NC}"
+        echo -e "${YELLOW}      Please install manually: opkg install shadowsocks-libev-ss-redir shadowsocks-libev-ss-local${NC}"
+        exit 1
+    fi
 fi
 
 # Configure Shadowsocks
@@ -217,11 +226,16 @@ echo ""
 echo -e "${CYAN}[6/6]${NC} Applying configuration and restarting services..."
 
 # Reload services with proper error checking
+# Track failures for final status
+service_failures=0
+
 echo -e "${BLUE}      Reloading network...${NC}"
 if /etc/init.d/network reload > /dev/null 2>&1; then
     echo -e "${GREEN}      Network reloaded${NC}"
 else
     echo -e "${YELLOW}      Warning: Network reload may have failed${NC}"
+    echo -e "${CYAN}      Check logs: logread | grep -i network${NC}"
+    service_failures=$((service_failures + 1))
 fi
 sleep 2
 
@@ -230,6 +244,8 @@ if /etc/init.d/firewall reload > /dev/null 2>&1; then
     echo -e "${GREEN}      Firewall reloaded${NC}"
 else
     echo -e "${YELLOW}      Warning: Firewall reload may have failed${NC}"
+    echo -e "${CYAN}      Check logs: logread | grep -i firewall${NC}"
+    service_failures=$((service_failures + 1))
 fi
 sleep 1
 
@@ -238,7 +254,12 @@ if /etc/init.d/shadowsocks-libev restart > /dev/null 2>&1; then
     echo -e "${GREEN}      Shadowsocks restarted${NC}"
 else
     echo -e "${YELLOW}      Warning: Shadowsocks restart may have failed${NC}"
-    echo -e "${YELLOW}      You may need to manually start it: /etc/init.d/shadowsocks-libev start${NC}"
+    echo -e "${CYAN}      Manual start: /etc/init.d/shadowsocks-libev start${NC}"
+    service_failures=$((service_failures + 1))
+fi
+
+if [ "$service_failures" -gt 0 ]; then
+    echo -e "${YELLOW}      $service_failures service(s) may need attention${NC}"
 fi
 
 echo -e "${GREEN}      Services configuration complete${NC}"
