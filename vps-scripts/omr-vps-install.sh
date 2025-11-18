@@ -209,11 +209,13 @@ net.mptcp.mptcp_scheduler = default
 # Kernel uses first available algorithm
 net.ipv4.tcp_congestion_control = bbr2
 net.ipv4.tcp_congestion_control = bbr
-net.core.default_qdisc = fq_codel
+# Use FQ qdisc for BBR (matches client config)
+net.core.default_qdisc = fq
 
 # Network Performance Tuning - Enhanced for Multi-WAN and 5G
-net.core.rmem_max = 268435456
-net.core.wmem_max = 268435456
+# Match client buffer sizes (128MB max) for symmetric behavior
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
 net.core.rmem_default = 67108864
 net.core.wmem_default = 67108864
 net.core.netdev_max_backlog = 300000
@@ -223,16 +225,18 @@ net.core.somaxconn = 8192
 net.core.optmem_max = 131072
 
 # TCP Performance - Optimized for 5G High-Bandwidth Links
-net.ipv4.tcp_rmem = 4096 131072 268435456
-net.ipv4.tcp_wmem = 4096 131072 268435456
+net.ipv4.tcp_rmem = 4096 131072 134217728
+net.ipv4.tcp_wmem = 4096 131072 134217728
 net.ipv4.tcp_max_syn_backlog = 16384
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
 net.ipv4.tcp_max_tw_buckets = 2000000
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+# TCP keepalive - AGGRESSIVE for WAN bonding failover
+# Must match client settings for consistent failover detection
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
 
 # Optimize TCP window size for high-latency 5G links
 net.ipv4.tcp_window_scaling = 1
@@ -267,7 +271,8 @@ net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_frto = 2
 net.ipv4.tcp_early_retrans = 3
 net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_base_mss = 1024
+# MSS clamping - match client value for tunnel overhead
+net.ipv4.tcp_base_mss = 1400
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1

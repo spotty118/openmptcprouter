@@ -1,8 +1,9 @@
-#!/bin/bash
+#!/bin/sh
 # OpenMPTCProuter Centralized Logging Library
 # Provides intelligent, non-annoying logging and diagnostics
 # Copyright 2025 OpenMPTCProuter Optimized
 # Licensed under GPL-3.0
+# Note: POSIX-compatible for busybox ash on OpenWrt
 
 # Log levels (syslog standard)
 readonly LOG_EMERG=0    # System is unusable
@@ -163,12 +164,8 @@ omr_check_and_log() {
 	fi
 }
 
-# Export functions for use by other scripts
-export -f omr_log
-export -f omr_log_debug
-export -f omr_log_info
-export -f omr_log_notice
-export -f omr_log_warning
-export -f omr_log_error
-export -f omr_log_critical
-export -f omr_check_and_log
+# Note: Functions are available when this file is sourced with:
+#   . /usr/lib/omr/omr-logger.sh
+#
+# The export -f syntax is bash-specific and not compatible with busybox ash.
+# Scripts should source this file directly to use the logging functions.
