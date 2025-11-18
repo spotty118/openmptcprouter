@@ -69,7 +69,7 @@ DISABLE_FAILSAFE=${DISABLE_FAILSAFE:-no}
 OMR_RELEASE=${OMR_RELEASE:-$(git describe --tags "$(git rev-list --tags --max-count=1 2>/dev/null)" 2>/dev/null | tail -1)}
 OMR_REPO=${OMR_REPO:-http://$OMR_HOST:$OMR_PORT/release/$OMR_RELEASE-$OMR_KERNEL/$OMR_TARGET}
 
-OMR_FEED_URL="${OMR_FEED_URL:-https://github.com/spotty118/openmptcprouter-feeds}"
+OMR_FEED_URL="${OMR_FEED_URL:-https://github.com/ysurac/openmptcprouter-feeds}"
 OMR_FEED_SRC="${OMR_FEED_SRC:-develop}"
 
 CUSTOM_FEED_URL="${CUSTOM_FEED_URL}"
@@ -135,15 +135,15 @@ if [ -n "$MISSING_DEPS" ]; then
 fi
 echo "✓ All required dependencies found"
 
-# Validate available disk space (require at least 30GB free)
+# Validate available disk space (require at least 25GB free)
 echo "Checking available disk space..."
 AVAILABLE_KB=$(df . | tail -1 | awk '{print $4}')
-REQUIRED_KB=$((30 * 1024 * 1024))  # 30GB in KB
+REQUIRED_KB=$((25 * 1024 * 1024))  # 25GB in KB
 if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
 	AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
 	echo "ERROR: Insufficient disk space"
 	echo "  Available: ${AVAILABLE_GB}GB"
-	echo "  Required:  30GB minimum"
+	echo "  Required:  25GB minimum"
 	echo "Please free up disk space before building."
 	exit 1
 fi
