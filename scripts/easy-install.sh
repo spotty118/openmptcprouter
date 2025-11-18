@@ -103,9 +103,37 @@ echo ""
 TEMP_DIR=$(mktemp -d)
 cd "$TEMP_DIR"
 
-# Download and run the full installer
+# Download and run the full installer with retry logic
 echo -e "${CYAN}[1/3]${NC} Downloading installer..."
-curl -sSL https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/vps-scripts/omr-vps-install.sh -o installer.sh
+
+# Retry function with exponential backoff
+download_with_retry() {
+    local url="$1"
+    local output="$2"
+    local max_retries=4
+    local retry=0
+    local wait_time=2
+
+    while [ $retry -lt $max_retries ]; do
+        if curl -sSL --connect-timeout 10 --max-time 60 "$url" -o "$output" 2>/dev/null; then
+            return 0
+        fi
+        retry=$((retry + 1))
+        if [ $retry -lt $max_retries ]; then
+            echo -e "${YELLOW}Download failed, retrying in ${wait_time}s (attempt $((retry+1))/${max_retries})...${NC}"
+            sleep $wait_time
+            wait_time=$((wait_time * 2))
+        fi
+    done
+    return 1
+}
+
+if ! download_with_retry "https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/vps-scripts/omr-vps-install.sh" "installer.sh"; then
+    echo -e "${RED}Failed to download installer after multiple attempts.${NC}"
+    echo -e "${YELLOW}Please check your network connection and try again.${NC}"
+    rm -rf "$TEMP_DIR"
+    exit 1
+fi
 chmod +x installer.sh
 
 echo -e "${CYAN}[2/3]${NC} Running installation (this may take 5-10 minutes)..."

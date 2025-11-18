@@ -433,16 +433,32 @@ iptables-restore < /etc/iptables/rules.v4
 
 echo -e "${GREEN}Step 5/6: Installing VPN software...${NC}"
 
-# Install Shadowsocks
+# Install Shadowsocks with error handling
 if ! command -v ss-server &> /dev/null; then
-    echo "Installing Shadowsocks-libev..."
-    apt-get install -y -qq shadowsocks-libev
+    echo -e "${BLUE}Installing Shadowsocks-libev...${NC}"
+    if apt-get install -y -qq shadowsocks-libev; then
+        echo -e "${GREEN}Shadowsocks installed successfully${NC}"
+    else
+        echo -e "${RED}Warning: Failed to install Shadowsocks${NC}"
+        echo -e "${YELLOW}Try manually: apt-get install shadowsocks-libev${NC}"
+        echo -e "${YELLOW}You may need to add the backports repository or use snap${NC}"
+    fi
+else
+    echo -e "${GREEN}Shadowsocks already installed${NC}"
 fi
 
-# Install WireGuard
+# Install WireGuard with error handling
 if ! command -v wg &> /dev/null; then
-    echo "Installing WireGuard..."
-    apt-get install -y -qq wireguard wireguard-tools
+    echo -e "${BLUE}Installing WireGuard...${NC}"
+    if apt-get install -y -qq wireguard wireguard-tools; then
+        echo -e "${GREEN}WireGuard installed successfully${NC}"
+    else
+        echo -e "${RED}Warning: Failed to install WireGuard${NC}"
+        echo -e "${YELLOW}Try manually: apt-get install wireguard wireguard-tools${NC}"
+        echo -e "${YELLOW}Ensure your kernel supports WireGuard (5.6+ has built-in support)${NC}"
+    fi
+else
+    echo -e "${GREEN}WireGuard already installed${NC}"
 fi
 
 # Create configuration directory
@@ -495,8 +511,25 @@ cat > /etc/shadowsocks-libev/config.json << ENDSS
 ENDSS
 
 # Enable and start Shadowsocks
-systemctl enable shadowsocks-libev-server@config || true
-systemctl restart shadowsocks-libev-server@config || true
+echo -e "${BLUE}Starting Shadowsocks service...${NC}"
+if systemctl enable shadowsocks-libev-server@config 2>/dev/null; then
+    if systemctl restart shadowsocks-libev-server@config 2>/dev/null; then
+        # Verify service is actually running
+        sleep 2
+        if systemctl is-active --quiet shadowsocks-libev-server@config; then
+            echo -e "${GREEN}Shadowsocks service started successfully${NC}"
+        else
+            echo -e "${YELLOW}Warning: Shadowsocks service may not be running properly${NC}"
+            echo -e "${YELLOW}Check status: systemctl status shadowsocks-libev-server@config${NC}"
+        fi
+    else
+        echo -e "${YELLOW}Warning: Failed to restart Shadowsocks service${NC}"
+        echo -e "${YELLOW}Check logs: journalctl -u shadowsocks-libev-server@config${NC}"
+    fi
+else
+    echo -e "${YELLOW}Warning: Could not enable Shadowsocks service${NC}"
+    echo -e "${YELLOW}Service may need to be started manually after reboot${NC}"
+fi
 
 echo ""
 echo -e "${GREEN}========================================${NC}"
