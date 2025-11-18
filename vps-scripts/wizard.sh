@@ -371,7 +371,8 @@ net.ipv4.tcp_moderate_rcvbuf = 1
 net.ipv4.tcp_fastopen = 3
 
 # Connection Tracking - Enhanced for Multi-WAN
-net.netfilter.nf_conntrack_max = 262144
+# Match router config (524288) for symmetric behavior
+net.netfilter.nf_conntrack_max = 524288
 net.netfilter.nf_conntrack_tcp_timeout_established = 432000
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 15
@@ -399,7 +400,8 @@ net.ipv4.tcp_orphan_retries = 0
 net.ipv4.tcp_base_mss = 1400
 
 # Increase connection tracking table size for multi-WAN
-net.nf_conntrack_max = 262144
+# Must match net.netfilter.nf_conntrack_max
+net.nf_conntrack_max = 524288
 
 # Security - Use loose RP filter for multi-WAN asymmetric routing
 # CRITICAL: Multi-WAN bonding creates asymmetric routes (packet arrives on WAN1, reply via WAN2)
@@ -476,7 +478,8 @@ cat > /etc/iptables/rules.v4 << IPTABLES
 -A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
-# Allow SSH
+# Allow SSH with rate limiting to prevent brute force attacks
+-A INPUT -p tcp --dport 22 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 4/min --hashlimit-burst 3 --hashlimit-mode srcip --hashlimit-name ssh_brute -j DROP
 -A INPUT -p tcp --dport 22 -j ACCEPT
 
 # Allow OpenMPTCProuter ports with rate limiting to prevent DDoS

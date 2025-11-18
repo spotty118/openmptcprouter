@@ -116,11 +116,13 @@ net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 net.mptcp.mptcp_enabled = 1
 net.ipv4.tcp_congestion_control = bbr
-net.core.default_qdisc = fq_codel
+# Use FQ qdisc for BBR (optimal pairing - fq_codel adds unnecessary overhead)
+net.core.default_qdisc = fq
 net.core.rmem_max = 134217728
 net.core.wmem_max = 134217728
-net.ipv4.tcp_rmem = 4096 87380 67108864
-net.ipv4.tcp_wmem = 4096 65536 67108864
+# TCP buffer max should match core max for symmetric behavior
+net.ipv4.tcp_rmem = 4096 87380 134217728
+net.ipv4.tcp_wmem = 4096 65536 134217728
 SYSCTL
     
     sysctl -p /etc/sysctl.d/99-omr-autopair.conf > /dev/null 2>&1

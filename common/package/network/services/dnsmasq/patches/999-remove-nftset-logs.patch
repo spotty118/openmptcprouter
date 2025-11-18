@@ -5,7 +5,7 @@
  	  if ((nl = strchr(err_str, '\n')))
  	    *nl = 0;
 -	  my_syslog(LOG_ERR,  "nftset %s %s", setname, err_str);
-+	  /* my_syslog(LOG_ERR,  "nftset %s %s", setname, err_str); */
++	  my_syslog(LOG_WARNING,  "nftset %s %s", setname, err_str);
  	  free(err_str);
  	}
      }

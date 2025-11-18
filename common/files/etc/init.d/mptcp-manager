@@ -53,6 +53,12 @@ start_service() {
     # Create state directories
     mkdir -p "$STATE_DIR" "$METRICS_DIR"
 
+    # Clean up stale state files from previous runs
+    # This ensures a fresh start without leftover penalty states
+    rm -rf /var/run/mptcp-paths/*.tmp.* 2>/dev/null
+    rm -rf /var/run/mptcp-metrics/*.prev 2>/dev/null
+    logger -t mptcp-manager -p daemon.info "Cleaned up stale state files"
+
     # Start metrics exporter
     procd_open_instance metrics-exporter
     procd_set_param command /usr/bin/mptcp-metrics-exporter
