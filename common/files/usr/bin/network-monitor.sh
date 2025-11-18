@@ -7,6 +7,9 @@
 
 set -u  # Catch undefined variables
 
+# Source helper library for cleaner interface handling
+[ -f /usr/lib/omr/omr-network.sh ] && . /usr/lib/omr/omr-network.sh
+
 LOG_TAG="network-monitor"
 PID_FILE="/var/run/network-monitor.pid"
 CHECK_INTERVAL=60  # Check every minute
@@ -87,8 +90,11 @@ auto_configure_wifi() {
 
     # Check if any WiFi is enabled
     local wifi_enabled=0
-    for radio in $(uci show wireless 2>/dev/null | grep "wireless\.radio.*=wifi-device" | cut -d. -f2 | cut -d= -f1); do
-        local disabled=$(uci -q get wireless.$radio.disabled)
+    local radio
+    # Use cleaner UCI parsing for wireless devices
+    for radio in $(uci -q show wireless 2>/dev/null | grep "=wifi-device$" | cut -d'.' -f2 | cut -d'=' -f1); do
+        local disabled
+        disabled=$(uci -q get "wireless.$radio.disabled")
         if [ "$disabled" != "1" ]; then
             wifi_enabled=1
             break
@@ -108,15 +114,22 @@ auto_configure_wifi() {
 check_wan_connectivity() {
     # Check if any WAN interface has link up
     local wan_up=0
-    local wan_ifaces=""
+    local iface
+    local ifname
 
-    # Find all WAN interfaces (dhcp, qmi, mbim, static with gateway)
-    wan_ifaces=$(uci -q show network | grep -E "proto='dhcp'|proto='qmi'|proto='mbim'|proto='3g'|proto='ncm'" | cut -d. -f2 | cut -d= -f1 | grep -v "^lan$" 2>/dev/null)
+    # Use helper library if available, otherwise fall back to UCI parsing
+    local wan_ifaces
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        wan_ifaces=$(get_wan_interfaces)
+    else
+        # Fallback: find WAN-like interfaces by proto
+        wan_ifaces=$(uci -q show network 2>/dev/null | grep -E "proto='(dhcp|qmi|mbim|3g|ncm)'" | cut -d'.' -f2 | cut -d'=' -f1 | grep -v "^lan$")
+    fi
 
     # Check each WAN interface for link status
     for iface in $wan_ifaces; do
-        local ifname=$(uci -q get network.$iface.device)
-        [ -z "$ifname" ] && ifname=$(uci -q get network.$iface.ifname)
+        ifname=$(uci -q get "network.$iface.device")
+        [ -z "$ifname" ] && ifname=$(uci -q get "network.$iface.ifname")
 
         if [ -n "$ifname" ] && ip link show "$ifname" 2>/dev/null | grep -q "state UP"; then
             wan_up=1

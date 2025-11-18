@@ -5,6 +5,14 @@
 # This will restore LAN access on at least one port
 #
 
+# Source defaults and helper library
+[ -f /etc/openmptcprouter/defaults.conf ] && . /etc/openmptcprouter/defaults.conf
+[ -f /usr/lib/omr/omr-network.sh ] && . /usr/lib/omr/omr-network.sh
+
+# Use default LAN IP if not set
+LAN_IP="${OMR_LAN_IP:-192.168.2.1}"
+LAN_NETMASK="${OMR_LAN_NETMASK:-255.255.255.0}"
+
 echo "═══════════════════════════════════════════════════"
 echo "OpenMPTCProuter Emergency Recovery"
 echo "═══════════════════════════════════════════════════"
@@ -43,8 +51,8 @@ case "$choice" in
 
                 echo "Using $port for LAN access"
 
-                # Remove from all WANs
-                for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+                # Remove from all WANs using helper library
+                for wan in $(get_wan_interfaces 2>/dev/null || uci -q show network | grep "=interface$" | grep -E "^network\.wan" | cut -d. -f2 | cut -d= -f1); do
                     wan_dev=$(uci -q get "network.$wan.device")
                     if [ "$wan_dev" = "$port" ]; then
                         uci delete "network.$wan"
@@ -63,11 +71,11 @@ case "$choice" in
                 # Set port separately with validation
                 uci -q set "network.@device[-1].ports=$port"
 
-                uci -q batch <<-'EOF'
+                uci -q batch <<-EOF
 					set network.lan.device='br-lan'
 					set network.lan.proto='static'
-					set network.lan.ipaddr='192.168.2.1'
-					set network.lan.netmask='255.255.255.0'
+					set network.lan.ipaddr='$LAN_IP'
+					set network.lan.netmask='$LAN_NETMASK'
 				EOF
                 
                 uci commit network
@@ -75,7 +83,7 @@ case "$choice" in
                 
                 echo ""
                 echo "✓ LAN restored on port $port"
-                echo "✓ Access router at http://192.168.2.1"
+                echo "✓ Access router at http://$LAN_IP"
                 break
             fi
         done
@@ -83,17 +91,17 @@ case "$choice" in
         
     2)
         echo ""
-        echo "Fixing: Resetting LAN IP to 192.168.2.1..."
-        
-        uci set network.lan.ipaddr='192.168.2.1'
-        uci set network.lan.netmask='255.255.255.0'
+        echo "Fixing: Resetting LAN IP to $LAN_IP..."
+
+        uci set network.lan.ipaddr="$LAN_IP"
+        uci set network.lan.netmask="$LAN_NETMASK"
         uci set network.lan.proto='static'
         uci commit network
         /etc/init.d/network restart
-        
+
         echo ""
-        echo "✓ LAN IP reset to 192.168.2.1"
-        echo "✓ Access router at http://192.168.2.1"
+        echo "✓ LAN IP reset to $LAN_IP"
+        echo "✓ Access router at http://$LAN_IP"
         ;;
         
     3)
@@ -152,8 +160,8 @@ config interface 'loopback'
 
 config interface 'lan'
 	option proto 'static'
-	option ipaddr '192.168.2.1'
-	option netmask '255.255.255.0'
+	option ipaddr '$LAN_IP'
+	option netmask '$LAN_NETMASK'
 NETEOF
                 )
                 # chmod no longer needed - file created with correct permissions
@@ -175,7 +183,7 @@ NETEOF
             echo ""
             echo "✓ Reset complete"
             echo "✓ System will auto-configure in 30 seconds"
-            echo "✓ Access router at http://192.168.2.1"
+            echo "✓ Access router at http://$LAN_IP"
         else
             echo "Cancelled"
         fi

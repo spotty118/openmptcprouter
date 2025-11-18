@@ -6,8 +6,9 @@
 
 set -e
 
-# Source the logging library
+# Source the logging library and network helper
 . /usr/lib/omr/omr-logger.sh
+[ -f /usr/lib/omr/omr-network.sh ] && . /usr/lib/omr/omr-network.sh
 OMR_COMPONENT="omr-diagnostics"
 
 # Colors for terminal output
@@ -54,9 +55,16 @@ check_network() {
 	local message=""
 	local details=""
 
-	# Check if any WAN interface is up
-	local wan_up=$(uci show network | grep -c "ifname.*wan" || echo "0")
-	if [ "$wan_up" -eq 0 ]; then
+	# Check if any WAN interface is configured using helper library
+	local wan_count=0
+	if type get_wan_interfaces >/dev/null 2>&1; then
+		wan_count=$(get_wan_interfaces | wc -w)
+	else
+		# Fallback: count WAN-like interfaces
+		wan_count=$(uci -q show network 2>/dev/null | grep "=interface$" | grep -E "^network\.wan" | wc -l)
+	fi
+
+	if [ "$wan_count" -eq 0 ]; then
 		status="warning"
 		message="No WAN interfaces configured"
 	fi
@@ -77,7 +85,7 @@ check_network() {
 
 	# Count active interfaces
 	local active_intfs=$(ip link | grep -c "state UP" || echo "0")
-	details="Active interfaces: $active_intfs"
+	details="Active interfaces: $active_intfs, WANs configured: $wan_count"
 
 	echo "$status|Network|$message|$details"
 }
