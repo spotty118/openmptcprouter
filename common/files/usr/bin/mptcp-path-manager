@@ -44,27 +44,6 @@ log_info() {
     logger -t mptcp-path -p daemon.info "$@"
 }
 
-# Clean up stale state files for interfaces that no longer exist
-cleanup_stale_states() {
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local basename=$(basename "$state_file")
-        # Extract interface name (remove .blacklist, .degraded, .penalty_* suffixes)
-        local iface=$(echo "$basename" | sed 's/\.\(blacklist\|degraded\|penalty_.*\|tmp\..*\)$//')
-
-        # Skip temp files
-        case "$basename" in
-            *.tmp.*) continue ;;
-        esac
-
-        # Check if interface still exists
-        if [ ! -e "/sys/class/net/$iface" ]; then
-            log_info "Cleaning up stale state for removed interface: $iface"
-            rm -f "$STATE_DIR/${iface}"*
-        fi
-    done
-}
-
 log_warn() {
     logger -t mptcp-path -p daemon.warning "$@"
 }

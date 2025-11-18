@@ -1020,7 +1020,8 @@ ENDHTML
 # Replace placeholders (using safe escaping to prevent command injection)
 # Escape special characters in replacement strings for sed safety
 escape_sed_replacement() {
-    printf '%s\n' "$1" | sed -e 's/[&/\]/\\&/g'
+    # Escape backslash, ampersand, forward slash, and newlines
+    printf '%s' "$1" | sed -e 's/[&/\]/\\&/g' -e ':a' -e 'N' -e '$!ba' -e 's/\n/\\n/g'
 }
 
 SAFE_VPS_IP=$(escape_sed_replacement "$VPS_PUBLIC_IP")
@@ -1032,24 +1033,55 @@ sed -i "s|REPLACE_PASSWORD|$SAFE_PASSWORD|g" /var/www/omr-setup/index.html
 sed -i "s|REPLACE_PAIRING_CODE|$SAFE_PAIRING|g" /var/www/omr-setup/index.html
 
 # Create systemd service for web interface
+# NOTE: This service exposes credentials and should NOT run permanently
 cat > /etc/systemd/system/omr-setup-web.service << 'ENDSERVICE'
 [Unit]
-Description=OpenMPTCProuter Setup Web Interface
+Description=OpenMPTCProuter Setup Web Interface (TEMPORARY - contains credentials)
 After=network.target
 
 [Service]
 Type=simple
 WorkingDirectory=/var/www/omr-setup
+# Bind to all interfaces so user can access from their local machine
+# SECURITY: This exposes credentials - stop this service after configuration
 ExecStart=/usr/bin/python3 -m http.server 8080
-Restart=always
+Restart=on-failure
+# Auto-stop after 1 hour for security
+RuntimeMaxSec=3600
 
 [Install]
 WantedBy=multi-user.target
 ENDSERVICE
 
 systemctl daemon-reload
-systemctl enable omr-setup-web > /dev/null 2>&1
-systemctl restart omr-setup-web
+# Do NOT enable on boot - this exposes credentials
+# Just start it now for initial setup
+systemctl start omr-setup-web 2>/dev/null || print_warning "Could not start setup web service"
+
+# Create helper script to manage the service
+cat > /usr/local/bin/omr-setup-web << 'WEBHELPER'
+#!/bin/sh
+case "$1" in
+    start)
+        systemctl start omr-setup-web
+        echo "Setup web page started at http://$(curl -4 -s --max-time 5 ifconfig.me 2>/dev/null):8080"
+        echo "WARNING: This exposes your VPS credentials. Stop when done with: omr-setup-web stop"
+        ;;
+    stop)
+        systemctl stop omr-setup-web
+        echo "Setup web page stopped"
+        ;;
+    status)
+        systemctl status omr-setup-web
+        ;;
+    *)
+        echo "Usage: omr-setup-web {start|stop|status}"
+        echo "Manages the temporary setup web page that displays your credentials"
+        exit 1
+        ;;
+esac
+WEBHELPER
+chmod +x /usr/local/bin/omr-setup-web
 
 print_success "Setup web page created"
 
@@ -1102,6 +1134,12 @@ echo -e "   ${PURPLE}Open this in your browser for:${NC}"
 echo -e "   • Step-by-step router setup guide"
 echo -e "   • Copy-paste ready configuration"
 echo -e "   • Printable credentials"
+echo ""
+echo -e "${RED}⚠️  SECURITY WARNING:${NC}"
+echo -e "   The web page at port 8080 exposes your credentials publicly."
+echo -e "   It will ${YELLOW}auto-stop after 1 hour${NC} for security."
+echo -e "   To stop it now:    ${CYAN}omr-setup-web stop${NC}"
+echo -e "   To restart later:  ${CYAN}omr-setup-web start${NC}"
 echo ""
 
 echo -e "${YELLOW}📁 Credentials Also Saved To:${NC}"
