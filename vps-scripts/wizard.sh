@@ -114,18 +114,23 @@ print_info "Kernel: ${GREEN}$(uname -r)${NC}"
 print_info "Validating OS compatibility..."
 
 if [ "$ID" = "debian" ]; then
-    if [ "$VERSION_ID" != "11" ] && [ "$VERSION_ID" != "12" ] && [ "$VERSION_ID" != "13" ]; then
-        print_error "This script requires Debian 11 (Bullseye), 12 (Bookworm), or 13 (Trixie). Current: $PRETTY_NAME"
+    # Debian 11+ supported (future versions likely compatible)
+    if [ -n "$VERSION_ID" ] && [ "$VERSION_ID" -ge 11 ] 2>/dev/null; then
+        print_success "Operating system is supported!"
+    else
+        print_error "This script requires Debian 11 or newer. Current: $PRETTY_NAME"
     fi
 elif [ "$ID" = "ubuntu" ]; then
-    if [ "$VERSION_ID" != "20.04" ] && [ "$VERSION_ID" != "22.04" ] && [ "$VERSION_ID" != "24.04" ]; then
-        print_error "This script requires Ubuntu 20.04, 22.04, or 24.04. Current: $PRETTY_NAME"
+    # Extract major version (20, 22, 24, etc.)
+    UBUNTU_MAJOR=$(echo "$VERSION_ID" | cut -d. -f1)
+    if [ -n "$UBUNTU_MAJOR" ] && [ "$UBUNTU_MAJOR" -ge 20 ] 2>/dev/null; then
+        print_success "Operating system is supported!"
+    else
+        print_error "This script requires Ubuntu 20.04 or newer. Current: $PRETTY_NAME"
     fi
 else
-    print_error "Unsupported OS: $PRETTY_NAME. Please use Debian 11/12/13 or Ubuntu 20.04/22.04/24.04"
+    print_error "Unsupported OS: $PRETTY_NAME. Please use Debian 11+ or Ubuntu 20.04+"
 fi
-
-print_success "Operating system is supported!"
 
 # Detect public IP and network interface
 print_info "Detecting network configuration..."
@@ -176,12 +181,21 @@ XRAY_UUID=$V2RAY_UUID
 print_success "Secure credentials generated"
 
 # Generate pairing code for easy router setup
+# NOTE: This function requires jq - called after package installation
 generate_pairing_code() {
     local ip=$1
     local pass=$2
     local port=${3:-65500}
 
-    # Create JSON configuration
+    # Check if jq is available
+    if ! command -v jq >/dev/null 2>&1; then
+        # Fallback: Create JSON manually without jq
+        local json="{\"server_ip\":\"$ip\",\"server_port\":$port,\"password\":\"$pass\",\"encryption\":\"chacha20-ietf-poly1305\",\"version\":\"1.0\"}"
+        echo "$json" | base64 -w0
+        return
+    fi
+
+    # Create JSON configuration with jq (preferred - handles escaping)
     local json=$(jq -n \
         --arg ip "$ip" \
         --arg port "$port" \
@@ -199,7 +213,7 @@ generate_pairing_code() {
     echo "$json" | base64 -w0
 }
 
-PAIRING_CODE=$(generate_pairing_code "$VPS_PUBLIC_IP" "$SHADOWSOCKS_PASS" "65500")
+# NOTE: PAIRING_CODE generation moved to after jq installation (see below)
 
 # Ask for user confirmation
 echo ""
@@ -267,6 +281,18 @@ apt-get install -y -qq \
     qrencode || print_error "Failed to install required packages"
 
 print_success "Required packages installed"
+
+# Generate pairing code now that jq is available
+print_info "Generating pairing code..."
+PAIRING_CODE=$(generate_pairing_code "$VPS_PUBLIC_IP" "$SHADOWSOCKS_PASS" "65500")
+
+# Validate pairing code was generated successfully
+if [ -z "$PAIRING_CODE" ]; then
+    print_warning "Could not generate pairing code - manual configuration required"
+    PAIRING_CODE="(generation failed - see /root/openmptcprouter_credentials.txt)"
+elif ! echo "$PAIRING_CODE" | base64 -d >/dev/null 2>&1; then
+    print_warning "Pairing code validation failed - code may be corrupted"
+fi
 
 # Load kernel modules
 print_step "5/8" "Configuring Kernel Modules"
@@ -1051,6 +1077,14 @@ systemctl enable omr-setup-web > /dev/null 2>&1
 systemctl restart omr-setup-web
 
 print_success "Setup web page created"
+
+# SECURITY WARNING: The setup page exposes credentials without authentication
+print_warning ""
+print_warning "SECURITY NOTE: The setup web page (port 8080) shows your credentials"
+print_warning "without authentication. After configuring your router, you should:"
+print_warning "  1. Stop the web server: systemctl stop omr-setup-web"
+print_warning "  2. Disable it permanently: systemctl disable omr-setup-web"
+print_warning ""
 
 # Installation complete
 clear

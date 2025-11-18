@@ -49,18 +49,18 @@ cleanup_stale_states() {
     for state_file in "$STATE_DIR"/*; do
         [ -f "$state_file" ] || continue
         local basename=$(basename "$state_file")
-        # Extract interface name (remove .blacklist, .degraded, .penalty_* suffixes)
-        local iface=$(echo "$basename" | sed 's/\.\(blacklist\|degraded\|penalty_.*\|tmp\..*\)$//')
 
-        # Skip temp files
+        # Skip files with extensions (like .blacklist, .degraded, .penalty_*, .tmp.*)
+        # We only check base interface state files to avoid duplicate cleanup
         case "$basename" in
-            *.tmp.*) continue ;;
+            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
         esac
 
+        # At this point, basename should be just the interface name
         # Check if interface still exists
-        if [ ! -e "/sys/class/net/$iface" ]; then
-            log_info "Cleaning up stale state for removed interface: $iface"
-            rm -f "$STATE_DIR/${iface}"*
+        if [ ! -e "/sys/class/net/$basename" ]; then
+            log_info "Cleaning up stale state for removed interface: $basename"
+            rm -f "$STATE_DIR/${basename}"*
         fi
     done
 }
@@ -70,22 +70,25 @@ log_warn() {
 }
 
 # Validate interface name to prevent command injection
-validate_interface_name() {
-    local iface=$1
-    # Only allow alphanumeric, underscore, hyphen, and dot
-    case "$iface" in
-        *[!a-zA-Z0-9._-]*)
-            log_warn "Invalid interface name rejected: $iface"
+# Uses omr-network.sh version if available, otherwise falls back to local implementation
+if ! type validate_interface_name >/dev/null 2>&1; then
+    validate_interface_name() {
+        local iface=$1
+        # Only allow alphanumeric, underscore, hyphen, and dot
+        case "$iface" in
+            *[!a-zA-Z0-9._-]*)
+                log_warn "Invalid interface name rejected: $iface"
+                return 1
+                ;;
+        esac
+        # Ensure reasonable length (max 15 chars for Linux interfaces)
+        if [ "${#iface}" -gt 15 ]; then
+            log_warn "Interface name too long: $iface"
             return 1
-            ;;
-    esac
-    # Ensure reasonable length (max 15 chars for Linux interfaces)
-    if [ "${#iface}" -gt 15 ]; then
-        log_warn "Interface name too long: $iface"
-        return 1
-    fi
-    return 0
-}
+        fi
+        return 0
+    }
+fi
 
 # Check if interface is a WAN interface
 is_wan_interface() {
@@ -471,22 +474,8 @@ check_path_degradation() {
     fi
 }
 
-# Clean up stale state files for interfaces that no longer exist
-cleanup_stale_states() {
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local basename=$(basename "$state_file")
-        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
-        case "$basename" in
-            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
-        esac
-        # Check if interface still exists
-        if [ ! -e "/sys/class/net/$basename" ]; then
-            log_info "Cleaning up stale state for removed interface: $basename"
-            rm -f "$STATE_DIR/${basename}"*
-        fi
-    done
-}
+# NOTE: cleanup_stale_states() is defined earlier in this file (lines 48-66)
+# The version above handles both base state files and files with extensions correctly
 
 # Monitor all WAN paths
 monitor_paths() {

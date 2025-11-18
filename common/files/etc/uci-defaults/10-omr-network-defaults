@@ -10,16 +10,19 @@
 [ -f /etc/omr-network-configured ] && exit 0
 
 # Configure LAN interface - MUST be static
-uci -q batch <<-EOF
+if ! uci -q batch <<-EOF
 	set network.lan.proto='static'
 	set network.lan.ipaddr='192.168.2.1'
 	set network.lan.netmask='255.255.255.0'
 	set network.lan.ip6assign='60'
 	commit network
 EOF
+then
+	logger -t omr-network -p user.err "CRITICAL: Failed to configure LAN network settings"
+fi
 
 # Enable DHCP server on LAN
-uci -q batch <<-EOF
+if ! uci -q batch <<-EOF
 	set dhcp.lan=dhcp
 	set dhcp.lan.interface='lan'
 	set dhcp.lan.start='100'
@@ -31,9 +34,12 @@ uci -q batch <<-EOF
 	set dhcp.lan.ra_management='1'
 	commit dhcp
 EOF
+then
+	logger -t omr-network -p user.err "CRITICAL: Failed to configure DHCP settings"
+fi
 
 # Configure DNS
-uci -q batch <<-EOF
+if ! uci -q batch <<-EOF
 	set dhcp.@dnsmasq[0].domainneeded='1'
 	set dhcp.@dnsmasq[0].localise_queries='1'
 	set dhcp.@dnsmasq[0].rebind_protection='1'
@@ -50,20 +56,31 @@ uci -q batch <<-EOF
 	set dhcp.@dnsmasq[0].ednspacket_max='1232'
 	commit dhcp
 EOF
+then
+	logger -t omr-network -p user.warning "Warning: Failed to configure DNS settings"
+fi
 
 # Set hostname
-uci -q batch <<-EOF
+if ! uci -q batch <<-EOF
 	set system.@system[0].hostname='OMR-Optimized'
 	set system.@system[0].timezone='UTC'
 	commit system
 EOF
+then
+	logger -t omr-network -p user.warning "Warning: Failed to set system hostname"
+fi
 
 # Mark as configured
 touch /etc/omr-network-configured
 
 # Apply network changes
-/etc/init.d/network reload
-/etc/init.d/dnsmasq reload
+if ! /etc/init.d/network reload 2>/dev/null; then
+	logger -t omr-network -p user.warning "Warning: Network reload failed, may require reboot"
+fi
+
+if ! /etc/init.d/dnsmasq reload 2>/dev/null; then
+	logger -t omr-network -p user.warning "Warning: DNSmasq reload failed"
+fi
 
 logger -t omr-network "Network configured: LAN IP 192.168.2.1 (static), DHCP enabled"
 logger -t omr-network "IMPORTANT: LAN is static to prevent APIPA (169.254.x.x) addresses"

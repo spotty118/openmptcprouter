@@ -154,7 +154,13 @@ omr_ask_input() {
 #
 # Validation functions
 #
+# All validation functions return 0 for success (valid), 1 for failure (invalid)
+# They can be used in conditionals: if omr_validate_ip "$ip"; then ...
+#
 
+# Check if a command exists in PATH
+# Usage: omr_validate_command "curl"
+# Returns: 0 if command exists, 1 otherwise
 omr_validate_command() {
     local cmd="$1"
     if command -v "$cmd" >/dev/null 2>&1; then

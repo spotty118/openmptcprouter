@@ -72,8 +72,10 @@ omr_log() {
 			last_time=$current_time
 		fi
 
-		# Update rate limit data atomically
-		echo "$last_time $count" > "$rate_file.tmp" && mv "$rate_file.tmp" "$rate_file"
+		# Update rate limit data atomically (fail silently if unable to write)
+		if echo "$last_time $count" > "$rate_file.tmp" 2>/dev/null; then
+			mv "$rate_file.tmp" "$rate_file" 2>/dev/null || rm -f "$rate_file.tmp" 2>/dev/null
+		fi
 	fi
 
 	# Convert level to priority name
