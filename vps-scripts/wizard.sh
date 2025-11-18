@@ -372,9 +372,11 @@ net.ipv4.tcp_timestamps = 1
 # Increase connection tracking table size for multi-WAN
 net.nf_conntrack_max = 262144
 
-# Security
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
+# Security - Use loose RP filter for multi-WAN asymmetric routing
+# CRITICAL: Multi-WAN bonding creates asymmetric routes (packet arrives on WAN1, reply via WAN2)
+# Strict mode (=1) would DROP these packets, breaking MPTCP subflows
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
