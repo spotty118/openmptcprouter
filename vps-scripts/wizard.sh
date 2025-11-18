@@ -325,7 +325,8 @@ net.mptcp.mptcp_enabled = 1
 net.mptcp.mptcp_checksum = 0
 net.mptcp.mptcp_syn_retries = 3
 net.mptcp.mptcp_path_manager = fullmesh
-net.mptcp.mptcp_scheduler = default
+# Use BLEST scheduler for bandwidth-aware path selection
+net.mptcp.mptcp_scheduler = blest
 
 # BBR Congestion Control (fq qdisc required for optimal BBR performance)
 # Actual algorithm selected at runtime below (detects BBR2, falls back to BBR, then CUBIC)
@@ -362,6 +363,9 @@ net.ipv4.tcp_keepalive_time = 20
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
 
+# TCP retries - faster failover detection (default 15 is ~30s, 8 is ~20s)
+net.ipv4.tcp_retries2 = 8
+
 # Optimize TCP window size
 net.ipv4.tcp_window_scaling = 1
 net.ipv4.tcp_adv_win_scale = 1
@@ -373,6 +377,7 @@ net.ipv4.tcp_fastopen = 3
 # Connection Tracking - Enhanced for Multi-WAN
 # Match router config (524288) for symmetric behavior
 net.netfilter.nf_conntrack_max = 524288
+net.nf_conntrack_max = 524288
 net.netfilter.nf_conntrack_tcp_timeout_established = 432000
 net.netfilter.nf_conntrack_tcp_timeout_time_wait = 30
 net.netfilter.nf_conntrack_tcp_timeout_close_wait = 15
@@ -398,10 +403,6 @@ net.ipv4.tcp_retries1 = 3
 net.ipv4.tcp_retries2 = 8
 net.ipv4.tcp_orphan_retries = 0
 net.ipv4.tcp_base_mss = 1400
-
-# Increase connection tracking table size for multi-WAN
-# Must match net.netfilter.nf_conntrack_max
-net.nf_conntrack_max = 524288
 
 # Security - Use loose RP filter for multi-WAN asymmetric routing
 # CRITICAL: Multi-WAN bonding creates asymmetric routes (packet arrives on WAN1, reply via WAN2)

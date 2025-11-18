@@ -12,6 +12,8 @@ HYSTERESIS_TIME=30        # Require 30 seconds of stability before marking path 
 CHECK_INTERVAL=5          # Check every 5 seconds
 STATE_DIR="/var/run/mptcp-paths"
 METRICS_DIR="/var/run/mptcp-metrics"
+LOCK_FILE="/var/run/mptcp-path-manager.lock"
+PID_FILE="/var/run/mptcp-path-manager.pid"
 
 # Blacklisting parameters
 BLACKLIST_THRESHOLD=5     # 5 failures in observation window triggers blacklist
@@ -19,6 +21,7 @@ BLACKLIST_WINDOW=300      # 5-minute observation window
 BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
+METRICS_MAX_AGE=60        # Ignore metrics older than 60 seconds
 
 # Metric bounds
 METRIC_MIN=1
@@ -30,13 +33,75 @@ mkdir -p "$METRICS_DIR"
 # Track if we should continue running
 RUNNING=1
 
-# Signal handlers for graceful shutdown
-cleanup_and_exit() {
-    log_info "MPTCP Path Manager shutting down (signal received)"
-    RUNNING=0
+# Single-instance enforcement using atomic mkdir
+acquire_lock() {
+    if mkdir "$LOCK_FILE" 2>/dev/null; then
+        echo $$ > "$PID_FILE"
+        return 0
+    fi
+
+    # Check if existing process is still running
+    if [ -f "$PID_FILE" ]; then
+        local old_pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            return 1  # Another instance is running
+        fi
+        # Stale lock - clean up and retry
+        rm -rf "$LOCK_FILE"
+        if mkdir "$LOCK_FILE" 2>/dev/null; then
+            echo $$ > "$PID_FILE"
+            return 0
+        fi
+    fi
+    return 1
 }
 
-trap cleanup_and_exit INT TERM
+release_lock() {
+    rm -f "$PID_FILE"
+    rm -rf "$LOCK_FILE"
+}
+
+# Signal handlers for clean shutdown
+cleanup_and_exit() {
+    log_info "MPTCP Path Manager shutting down (PID: $$)"
+    RUNNING=0
+    release_lock
+}
+
+trap cleanup_and_exit INT TERM HUP QUIT
+
+# Clean up orphaned state files on startup
+cleanup_stale_state() {
+    local now=$(date +%s)
+
+    # Remove blacklist files older than 2x blacklist duration (stale)
+    for bl_file in "$STATE_DIR"/*.blacklist; do
+        [ -f "$bl_file" ] || continue
+        local bl_time=$(cat "$bl_file" 2>/dev/null || echo 0)
+        local age=$((now - bl_time))
+        if [ "$age" -gt $((BLACKLIST_DURATION * 2)) ]; then
+            local iface=$(basename "$bl_file" .blacklist)
+            log_info "Cleaning stale blacklist for $iface (age: ${age}s)"
+            rm -f "$bl_file"
+            rm -f "$STATE_DIR/${iface}.penalty_blacklist"
+        fi
+    done
+
+    # Remove state files for interfaces that no longer exist
+    for state_file in "$STATE_DIR"/*; do
+        [ -f "$state_file" ] || continue
+        local filename=$(basename "$state_file")
+        local iface="${filename%%.*}"
+        # Skip penalty and lock files
+        case "$filename" in
+            *.tmp.*|*.lock) continue ;;
+        esac
+        if [ ! -d "/sys/class/net/$iface" ]; then
+            log_info "Cleaning state for removed interface: $iface"
+            rm -f "$STATE_DIR/${iface}"*
+        fi
+    done
+}
 
 # Logging helper
 log_info() {
@@ -310,7 +375,13 @@ check_path_recovery() {
     local iface=$1
     local now=$2
 
-    local oper_state=$(cat /sys/class/net/$iface/operstate 2>/dev/null)
+    # Validate interface exists before reading state
+    local state_path="/sys/class/net/$iface/operstate"
+    if [ ! -f "$state_path" ]; then
+        return
+    fi
+
+    local oper_state=$(cat "$state_path" 2>/dev/null)
     [ -z "$oper_state" ] && return
 
     # Read current state
@@ -396,9 +467,30 @@ check_path_degradation() {
         return
     fi
 
-    # Read loss rate from metrics
+    # Read metrics line
     # Format: iface|timestamp|rx_packets|tx_packets|rx_bytes|tx_bytes|rx_errors|tx_errors|loss_rate|signal_strength
-    local loss_rate=$(awk -F'|' '{print $9}' "$metrics_file")
+    local metrics_line=$(cat "$metrics_file" 2>/dev/null)
+    if [ -z "$metrics_line" ]; then
+        return
+    fi
+
+    # Extract timestamp and check staleness
+    local metrics_timestamp=$(echo "$metrics_line" | awk -F'|' '{print $2}')
+    local now=$(date +%s)
+    if [ -n "$metrics_timestamp" ] && [ "$metrics_timestamp" -gt 0 ] 2>/dev/null; then
+        local metrics_age=$((now - metrics_timestamp))
+        if [ "$metrics_age" -gt "$METRICS_MAX_AGE" ]; then
+            # Metrics are stale - don't trust them
+            if is_degraded "$iface"; then
+                log_warn "Stale metrics for $iface (age: ${metrics_age}s > ${METRICS_MAX_AGE}s) - clearing degraded state"
+                rm -f "$STATE_DIR/${iface}.degraded"
+                remove_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "stale metrics cleared" "degraded"
+            fi
+            return
+        fi
+    fi
+
+    local loss_rate=$(echo "$metrics_line" | awk -F'|' '{print $9}')
 
     if [ -z "$loss_rate" ] || [ "$loss_rate" = "N/A" ]; then
         return
@@ -456,26 +548,38 @@ monitor_paths() {
     done
 }
 
-# Main monitoring loop
-log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
-
-# Initial cleanup of stale state files from previous runs
-cleanup_stale_states
-
-CLEANUP_COUNTER=0
-CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
-
-while [ "$RUNNING" -eq 1 ]; do
-    monitor_paths
-
-    # Periodic cleanup of stale states
-    CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
-    if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
-        cleanup_stale_states
-        CLEANUP_COUNTER=0
+# Main entry point
+main() {
+    # Acquire lock - exit if another instance is running
+    if ! acquire_lock; then
+        echo "Another instance of MPTCP Path Manager is already running" >&2
+        exit 1
     fi
 
-    sleep "$CHECK_INTERVAL"
-done
+    log_info "MPTCP Path Manager starting (PID: $$, hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
 
-log_info "MPTCP Path Manager stopped"
+    # Initial cleanup of stale state files from previous runs
+    cleanup_stale_state
+    cleanup_stale_states
+
+    CLEANUP_COUNTER=0
+    CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
+
+    while [ "$RUNNING" -eq 1 ]; do
+        monitor_paths
+
+        # Periodic cleanup of stale states
+        CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
+        if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
+            cleanup_stale_states
+            CLEANUP_COUNTER=0
+        fi
+
+        sleep "$CHECK_INTERVAL"
+    done
+
+    log_info "MPTCP Path Manager stopped"
+}
+
+# Run main
+main
