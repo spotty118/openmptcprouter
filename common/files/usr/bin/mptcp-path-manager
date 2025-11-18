@@ -14,6 +14,7 @@ BLACKLIST_WINDOW=300      # 5-minute observation window
 BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
+CONNECTIVITY_CHECK_TIMEOUT=2  # Timeout for connectivity checks in seconds
 
 mkdir -p "$STATE_DIR"
 mkdir -p "$METRICS_DIR"
@@ -256,7 +257,39 @@ remove_metric_penalty() {
     return 1
 }
 
+# Check actual connectivity (not just link state)
+# Returns 0 if interface has actual connectivity, 1 otherwise
+check_actual_connectivity() {
+    local iface=$1
+
+    # Get the gateway for this interface
+    local gateway=$(ip route show dev "$iface" 2>/dev/null | grep "default" | awk '{print $3}' | head -1)
+
+    # If no default route, try to get any gateway
+    if [ -z "$gateway" ]; then
+        gateway=$(ip route show dev "$iface" 2>/dev/null | grep "via" | awk '{print $3}' | head -1)
+    fi
+
+    # If still no gateway, check if interface at least has an IP
+    if [ -z "$gateway" ]; then
+        local iface_ip=$(ip -4 addr show dev "$iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
+        if [ -z "$iface_ip" ]; then
+            return 1  # No IP, no connectivity
+        fi
+        # Has IP but no gateway - might be point-to-point, consider it up
+        return 0
+    fi
+
+    # Ping the gateway with timeout
+    if ping -c 1 -W "$CONNECTIVITY_CHECK_TIMEOUT" -I "$iface" "$gateway" >/dev/null 2>&1; then
+        return 0  # Gateway reachable
+    fi
+
+    return 1  # Gateway not reachable
+}
+
 # FIX 2.1: Check path recovery with hysteresis
+# ENHANCED: Now checks actual connectivity, not just link state
 check_path_recovery() {
     local iface=$1
     local now=$2
@@ -271,8 +304,22 @@ EOF
 
     case "$oper_state" in
         up)
-            # Path is operationally up
-            if [ "$failure_count" -gt 0 ]; then
+            # Path is operationally up - but verify actual connectivity
+            local has_connectivity=1
+            if ! check_actual_connectivity "$iface"; then
+                has_connectivity=0
+                # Interface is "up" but no actual connectivity - treat as soft failure
+                if [ "$failure_count" -eq 0 ]; then
+                    # First detection of connectivity loss
+                    last_failure=$now
+                    failure_count=1
+                    recovery_start=0
+                    log_warn "Path $iface UP but NO CONNECTIVITY (gateway unreachable)"
+                    write_path_state "$iface" "$last_failure" "$recovery_start" "$failure_count"
+                fi
+            fi
+
+            if [ "$failure_count" -gt 0 ] && [ "$has_connectivity" -eq 1 ]; then
                 if [ "$recovery_start" -eq 0 ]; then
                     # Just came back - start recovery timer
                     recovery_start=$now

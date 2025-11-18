@@ -50,11 +50,40 @@ load_modem_drivers() {
     fi
     
     # Add USB ID to drivers if not auto-detected
-    echo "$MODEM_VENDOR_ID 0801" > /sys/bus/usb-serial/drivers/option1/new_id 2>/dev/null || true
-    echo "$MODEM_VENDOR_ID 0801" > /sys/bus/usb/drivers/qmi_wwan/new_id 2>/dev/null || true
-    echo "$MODEM_VENDOR_ID 0800" > /sys/bus/usb/drivers/cdc_mbim/new_id 2>/dev/null || true
-    
-    log_msg "Modem drivers loaded"
+    # FIX: Verify device binding with retry instead of silently ignoring failures
+    local bind_attempts=0
+    local max_bind_attempts=3
+    local bind_success=0
+
+    while [ $bind_attempts -lt $max_bind_attempts ]; do
+        bind_attempts=$((bind_attempts + 1))
+
+        # Attempt to bind USB IDs
+        echo "$MODEM_VENDOR_ID 0801" > /sys/bus/usb-serial/drivers/option1/new_id 2>/dev/null
+        echo "$MODEM_VENDOR_ID 0801" > /sys/bus/usb/drivers/qmi_wwan/new_id 2>/dev/null
+        echo "$MODEM_VENDOR_ID 0800" > /sys/bus/usb/drivers/cdc_mbim/new_id 2>/dev/null
+
+        # Wait briefly for binding to take effect
+        sleep 1
+
+        # Verify at least one binding succeeded by checking for device nodes
+        if [ -e /dev/cdc-wdm0 ] || [ -c /dev/ttyUSB0 ]; then
+            bind_success=1
+            break
+        fi
+
+        if [ $bind_attempts -lt $max_bind_attempts ]; then
+            log_msg "Device binding attempt $bind_attempts failed, retrying..."
+            sleep 2
+        fi
+    done
+
+    if [ $bind_success -eq 1 ]; then
+        log_msg "Modem drivers loaded and device binding verified"
+    else
+        log_msg "WARNING: Device binding may have failed after $max_bind_attempts attempts"
+        log_msg "Modem may not be fully operational"
+    fi
 }
 
 # Wait for device to be ready

@@ -287,11 +287,18 @@ output_json() {
 		[ "$first" -eq 0 ] && echo ","
 		first=0
 
+		# FIX: Escape special characters to prevent JSON parsing errors
+		# Replace backslash first, then quotes, then control characters
+		component=$(echo "$component" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
+		status=$(echo "$status" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
+		message=$(echo "$message" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
+		details=$(echo "$details" | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g')
+
 		echo "    {"
-		echo '      "component": "'$component'",'
-		echo '      "status": "'$status'",'
-		echo '      "message": "'$message'",'
-		echo '      "details": "'$details'"'
+		echo '      "component": "'"$component"'",'
+		echo '      "status": "'"$status"'",'
+		echo '      "message": "'"$message"'",'
+		echo '      "details": "'"$details"'"'
 		echo -n "    }"
 	done
 
