@@ -7,6 +7,11 @@
 
 set -u  # Catch undefined variables
 
+# Source network helper library for safe UCI operations
+if [ -f /usr/lib/omr/omr-network.sh ]; then
+    . /usr/lib/omr/omr-network.sh
+fi
+
 LOG_TAG="usb-modem-autoconfig"
 
 # Load USA carrier APN database if available
@@ -369,8 +374,15 @@ is_modem_configured() {
         return 1
     fi
 
-    # Check all WAN interfaces
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+    # Check all WAN interfaces using helper library if available
+    local wan_list=""
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        wan_list=$(get_wan_interfaces)
+    else
+        wan_list=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1)
+    fi
+
+    for wan in $wan_list; do
         local device
         device=$(uci -q get "network.$wan.device")
 
@@ -401,7 +413,15 @@ is_modem_configured() {
 cleanup_disconnected_modems() {
     log_msg "Checking for disconnected modems..."
 
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan[0-9]" | cut -d. -f2 | cut -d= -f1); do
+    # Get WAN interfaces using helper library if available
+    local wan_list=""
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        wan_list=$(get_wan_interfaces)
+    else
+        wan_list=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan[0-9]" | cut -d. -f2 | cut -d= -f1)
+    fi
+
+    for wan in $wan_list; do
         local proto
         local device
         proto=$(uci -q get "network.$wan.proto")
