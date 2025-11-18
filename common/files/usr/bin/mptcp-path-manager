@@ -18,6 +18,17 @@ DEGRADED_METRIC_PENALTY=50
 mkdir -p "$STATE_DIR"
 mkdir -p "$METRICS_DIR"
 
+# Track if we should continue running
+RUNNING=1
+
+# Signal handlers for graceful shutdown
+cleanup_and_exit() {
+    log_info "MPTCP Path Manager shutting down (signal received)"
+    RUNNING=0
+}
+
+trap cleanup_and_exit INT TERM
+
 # Logging helper
 log_info() {
     logger -t mptcp-path -p daemon.info "$@"
@@ -364,11 +375,30 @@ check_path_degradation() {
     fi
 }
 
+# Clean up stale state files for interfaces that no longer exist
+cleanup_stale_states() {
+    for state_file in "$STATE_DIR"/*; do
+        [ -f "$state_file" ] || continue
+        local basename=$(basename "$state_file")
+        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
+        case "$basename" in
+            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
+        esac
+        # Check if interface still exists
+        if [ ! -e "/sys/class/net/$basename" ]; then
+            log_info "Cleaning up stale state for removed interface: $basename"
+            rm -f "$STATE_DIR/${basename}"*
+        fi
+    done
+}
+
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
-    for iface in $(ls /sys/class/net/ 2>/dev/null); do
+    for iface_path in /sys/class/net/*; do
+        [ -e "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
         if is_wan_interface "$iface"; then
             check_path_recovery "$iface" "$now"
             check_path_blacklisting "$iface" "$now"
@@ -380,7 +410,20 @@ monitor_paths() {
 # Main monitoring loop
 log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
 
-while true; do
+CLEANUP_COUNTER=0
+CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
+
+while [ "$RUNNING" -eq 1 ]; do
     monitor_paths
+
+    # Periodic cleanup of stale states
+    CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
+    if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
+        cleanup_stale_states
+        CLEANUP_COUNTER=0
+    fi
+
     sleep "$CHECK_INTERVAL"
 done
+
+log_info "MPTCP Path Manager stopped"
