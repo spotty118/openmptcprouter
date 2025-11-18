@@ -19,14 +19,37 @@ BLACKLIST_WINDOW=300      # 5-minute observation window
 BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
-CONNECTIVITY_CHECK_TIMEOUT=2  # Timeout for connectivity checks in seconds
 
 # Metric bounds
 METRIC_MIN=1
 METRIC_MAX=10000
 
+# Lock file for state operations (prevents race conditions with mptcp-metrics-exporter)
+STATE_LOCK="/var/lock/mptcp-paths.lock"
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$METRICS_DIR"
+mkdir -p "$(dirname "$STATE_LOCK")"
+
+# Acquire lock for state operations (timeout after 5 seconds)
+acquire_state_lock() {
+    local timeout=5
+    local count=0
+    while [ $count -lt $timeout ]; do
+        if mkdir "$STATE_LOCK" 2>/dev/null; then
+            return 0
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    log_warn "Failed to acquire state lock after ${timeout}s"
+    return 1
+}
+
+# Release state lock
+release_state_lock() {
+    rmdir "$STATE_LOCK" 2>/dev/null
+}
 
 # Track if we should continue running
 RUNNING=1
@@ -34,6 +57,7 @@ RUNNING=1
 # Signal handlers for graceful shutdown
 cleanup_and_exit() {
     log_info "MPTCP Path Manager shutting down (signal received)"
+    release_state_lock
     RUNNING=0
 }
 
@@ -42,27 +66,6 @@ trap cleanup_and_exit INT TERM
 # Logging helper
 log_info() {
     logger -t mptcp-path -p daemon.info "$@"
-}
-
-# Clean up stale state files for interfaces that no longer exist
-cleanup_stale_states() {
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local basename=$(basename "$state_file")
-        # Extract interface name (remove .blacklist, .degraded, .penalty_* suffixes)
-        local iface=$(echo "$basename" | sed 's/\.\(blacklist\|degraded\|penalty_.*\|tmp\..*\)$//')
-
-        # Skip temp files
-        case "$basename" in
-            *.tmp.*) continue ;;
-        esac
-
-        # Check if interface still exists
-        if [ ! -e "/sys/class/net/$iface" ]; then
-            log_info "Cleaning up stale state for removed interface: $iface"
-            rm -f "$STATE_DIR/${iface}"*
-        fi
-    done
 }
 
 log_warn() {
@@ -106,7 +109,7 @@ is_wan_interface() {
     fi
 
     # Check if interface has multipath enabled in UCI
-    local multipath=$(uci get network.${iface}.multipath 2>/dev/null)
+    local multipath=$(uci get "network.${iface}.multipath" 2>/dev/null)
     if [ "$multipath" = "on" ]; then
         return 0
     fi
@@ -219,7 +222,7 @@ apply_metric_penalty() {
         return 0
     fi
 
-    local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
+    local current_metric=$(uci get "network.${iface}.metric" 2>/dev/null)
     local uci_section="$iface"
 
     if [ -z "$current_metric" ]; then
@@ -235,11 +238,17 @@ apply_metric_penalty() {
         fi
 
         if [ -n "$uci_section" ]; then
-            current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
+            current_metric=$(uci get "network.${uci_section}.metric" 2>/dev/null || echo 100)
         else
             log_warn "Could not apply metric penalty to $iface: interface not found in UCI"
             return 1
         fi
+    fi
+
+    # Validate current_metric is numeric before arithmetic
+    if ! echo "$current_metric" | grep -qE '^[0-9]+$'; then
+        log_warn "Invalid metric value for $iface: $current_metric, using default 100"
+        current_metric=100
     fi
 
     # Calculate new metric with bounds enforcement
@@ -247,9 +256,12 @@ apply_metric_penalty() {
     [ "$new_metric" -gt "$METRIC_MAX" ] && new_metric="$METRIC_MAX"
     [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
 
-    uci set network.${uci_section}.metric="$new_metric"
+    if ! uci set "network.${uci_section}.metric=$new_metric"; then
+        log_warn "Failed to set metric for $iface ($uci_section)"
+        return 1
+    fi
     if ! uci commit network; then
-        log_warn "Failed to commit metric penalty for $iface"
+        log_warn "Failed to commit network config for $iface"
         return 1
     fi
     mark_penalty_applied "$iface" "$penalty_type"
@@ -269,7 +281,7 @@ remove_metric_penalty() {
         return 0
     fi
 
-    local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
+    local current_metric=$(uci get "network.${iface}.metric" 2>/dev/null)
     local uci_section="$iface"
 
     if [ -z "$current_metric" ]; then
@@ -285,10 +297,16 @@ remove_metric_penalty() {
         fi
 
         if [ -n "$uci_section" ]; then
-            current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
+            current_metric=$(uci get "network.${uci_section}.metric" 2>/dev/null || echo 100)
         else
             return 1
         fi
+    fi
+
+    # Validate current_metric is numeric before arithmetic
+    if ! echo "$current_metric" | grep -qE '^[0-9]+$'; then
+        log_warn "Invalid metric value for $iface: $current_metric, using default 100"
+        current_metric=100
     fi
 
     # Calculate new metric with bounds enforcement
@@ -296,9 +314,12 @@ remove_metric_penalty() {
     [ "$new_metric" -gt "$METRIC_MAX" ] && new_metric="$METRIC_MAX"
     [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
 
-    uci set network.${uci_section}.metric="$new_metric"
+    if ! uci set "network.${uci_section}.metric=$new_metric"; then
+        log_warn "Failed to set metric for $iface ($uci_section)"
+        return 1
+    fi
     if ! uci commit network; then
-        log_warn "Failed to commit metric penalty removal for $iface"
+        log_warn "Failed to commit network config for $iface"
         return 1
     fi
     mark_penalty_removed "$iface" "$penalty_type"
@@ -306,39 +327,7 @@ remove_metric_penalty() {
     return 0
 }
 
-# Check actual connectivity (not just link state)
-# Returns 0 if interface has actual connectivity, 1 otherwise
-check_actual_connectivity() {
-    local iface=$1
-
-    # Get the gateway for this interface
-    local gateway=$(ip route show dev "$iface" 2>/dev/null | grep "default" | awk '{print $3}' | head -1)
-
-    # If no default route, try to get any gateway
-    if [ -z "$gateway" ]; then
-        gateway=$(ip route show dev "$iface" 2>/dev/null | grep "via" | awk '{print $3}' | head -1)
-    fi
-
-    # If still no gateway, check if interface at least has an IP
-    if [ -z "$gateway" ]; then
-        local iface_ip=$(ip -4 addr show dev "$iface" 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1 | head -1)
-        if [ -z "$iface_ip" ]; then
-            return 1  # No IP, no connectivity
-        fi
-        # Has IP but no gateway - might be point-to-point, consider it up
-        return 0
-    fi
-
-    # Ping the gateway with timeout
-    if ping -c 1 -W "$CONNECTIVITY_CHECK_TIMEOUT" -I "$iface" "$gateway" >/dev/null 2>&1; then
-        return 0  # Gateway reachable
-    fi
-
-    return 1  # Gateway not reachable
-}
-
 # FIX 2.1: Check path recovery with hysteresis
-# ENHANCED: Now checks actual connectivity, not just link state
 check_path_recovery() {
     local iface=$1
     local now=$2
@@ -353,22 +342,8 @@ EOF
 
     case "$oper_state" in
         up)
-            # Path is operationally up - but verify actual connectivity
-            local has_connectivity=1
-            if ! check_actual_connectivity "$iface"; then
-                has_connectivity=0
-                # Interface is "up" but no actual connectivity - treat as soft failure
-                if [ "$failure_count" -eq 0 ]; then
-                    # First detection of connectivity loss
-                    last_failure=$now
-                    failure_count=1
-                    recovery_start=0
-                    log_warn "Path $iface UP but NO CONNECTIVITY (gateway unreachable)"
-                    write_path_state "$iface" "$last_failure" "$recovery_start" "$failure_count"
-                fi
-            fi
-
-            if [ "$failure_count" -gt 0 ] && [ "$has_connectivity" -eq 1 ]; then
+            # Path is operationally up
+            if [ "$failure_count" -gt 0 ]; then
                 if [ "$recovery_start" -eq 0 ]; then
                     # Just came back - start recovery timer
                     recovery_start=$now
@@ -451,6 +426,12 @@ check_path_degradation() {
         return
     fi
 
+    # Validate loss_rate is numeric before comparison
+    if ! echo "$loss_rate" | grep -qE '^[0-9]+$'; then
+        log_warn "Invalid loss rate for $iface: $loss_rate"
+        return
+    fi
+
     # Check if loss rate exceeds threshold
     if [ "$loss_rate" -ge "$DEGRADED_THRESHOLD" ]; then
         # Path is degraded - reduce priority
@@ -471,11 +452,32 @@ check_path_degradation() {
     fi
 }
 
+# Clean up stale state files for interfaces that no longer exist
+cleanup_stale_states() {
+    for state_file in "$STATE_DIR"/*; do
+        [ -f "$state_file" ] || continue
+        local basename=$(basename "$state_file")
+        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
+        case "$basename" in
+            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
+        esac
+        # Check if interface still exists
+        if [ ! -e "/sys/class/net/$basename" ]; then
+            log_info "Cleaning up stale state for removed interface: $basename"
+            rm -f "$STATE_DIR/${basename}"*
+        fi
+    done
+}
+
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
-    # Use glob directly instead of ls for efficiency and POSIX compliance
+    # Acquire lock for state operations
+    if ! acquire_state_lock; then
+        return
+    fi
+
     for iface_path in /sys/class/net/*; do
         [ -e "$iface_path" ] || continue
         local iface=$(basename "$iface_path")
@@ -485,13 +487,12 @@ monitor_paths() {
             check_path_degradation "$iface"
         fi
     done
+
+    release_state_lock
 }
 
 # Main monitoring loop
 log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
-
-# Initial cleanup of stale state files from previous runs
-cleanup_stale_states
 
 CLEANUP_COUNTER=0
 CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)

@@ -5,6 +5,11 @@
 # Restores at least one LAN port for network access
 #
 
+# Source network helper library for safe UCI operations
+if [ -f /usr/lib/omr/omr-network.sh ]; then
+    . /usr/lib/omr/omr-network.sh
+fi
+
 LOG_TAG="emergency-restore"
 
 log_msg() {
@@ -19,27 +24,32 @@ log_msg "═══════════════════════�
 # Find any available physical port
 emergency_port=""
 
-# PERF FIX: Pre-build WAN device list to avoid O(N×M) nested loop
-# Reduces complexity from O(N×M) to O(N+M) - 2-10x faster on many interfaces
+# Build list of WAN devices using helper library
 wan_devices=""
-for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
-    wan_device=$(uci -q get "network.$wan.device")
-    if [ -n "$wan_device" ]; then
-        wan_devices="$wan_devices $wan_device "
-    fi
-done
+if type get_wan_interfaces >/dev/null 2>&1; then
+    for wan in $(get_wan_interfaces); do
+        wan_device=$(uci -q get "network.$wan.device")
+        [ -n "$wan_device" ] && wan_devices="$wan_devices $wan_device "
+    done
+else
+    # Fallback to grep/cut if helper not available
+    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+        wan_device=$(uci -q get "network.$wan.device")
+        [ -n "$wan_device" ] && wan_devices="$wan_devices $wan_device "
+    done
+fi
 
 # Try to find a port not assigned to WAN
 for iface in /sys/class/net/eth* /sys/class/net/lan*; do
     if [ -e "$iface" ]; then
         port=$(basename "$iface")
 
-        # Check if this port is assigned to a WAN (single string match - O(1))
+        # Check if this port is assigned to a WAN (O(1) string match)
         if echo "$wan_devices" | grep -q " $port "; then
-            continue  # It's a WAN, skip it
+            continue
         fi
 
-        # Found a non-WAN port, use it for emergency LAN
+        # If not a WAN, use it for emergency LAN
         emergency_port="$port"
         break
     fi
@@ -47,24 +57,36 @@ done
 
 # If all ports are WANs, take the last one back
 if [ -z "$emergency_port" ]; then
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | tail -n 1); do
-        emergency_port=$(uci -q get network.$wan.device)
+    last_wan=""
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        last_wan=$(get_wan_interfaces | awk '{print $NF}')
+    else
+        last_wan=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | tail -n 1)
+    fi
+
+    if [ -n "$last_wan" ]; then
+        emergency_port=$(uci -q get "network.$last_wan.device")
         if [ -n "$emergency_port" ]; then
             log_msg "Taking WAN port $emergency_port for emergency LAN"
-            uci delete network.$wan
-            break
+            uci delete "network.$last_wan"
         fi
-    done
+    fi
 fi
 
 # If still no port, assign ALL ports to LAN
 if [ -z "$emergency_port" ]; then
     log_msg "No ports available - assigning ALL ports to LAN"
-    
+
     # Delete all WANs
-    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
-        uci delete network.$wan
-    done
+    if type get_wan_interfaces >/dev/null 2>&1; then
+        for wan in $(get_wan_interfaces); do
+            uci delete "network.$wan"
+        done
+    else
+        for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+            uci delete "network.$wan"
+        done
+    fi
     
     # Collect all physical ports
     all_ports=""
@@ -91,17 +113,9 @@ if [ -z "$emergency_port" ]; then
 			set network.lan.ip6assign='60'
 		EOF
         
-        if ! uci commit network; then
-            log_msg "ERROR: Failed to commit network configuration"
-            return 1
-        fi
-
-        if ! /etc/init.d/network restart; then
-            log_msg "ERROR: Network restart failed - system may be in inconsistent state"
-            log_msg "Try manual recovery: /etc/init.d/network restart"
-            return 1
-        fi
-
+        uci commit network
+        /etc/init.d/network restart
+        
         log_msg "✓ ALL ports assigned to LAN"
         log_msg "✓ LAN IP: 192.168.2.1"
         log_msg "✓ Connect to any port and access http://192.168.2.1"
@@ -126,11 +140,8 @@ if [ -n "$emergency_port" ]; then
 		set network.lan.ip6assign='60'
 	EOF
     
-    if ! uci commit network; then
-        log_msg "ERROR: Failed to commit network configuration"
-        exit 1
-    fi
-
+    uci commit network
+    
     # Ensure DHCP is enabled
     uci -q batch <<-EOF
 		set dhcp.lan=dhcp
@@ -143,15 +154,8 @@ if [ -n "$emergency_port" ]; then
 	EOF
     
     # Restart network services
-    if ! /etc/init.d/network restart; then
-        log_msg "ERROR: Network restart failed"
-        log_msg "Try manual: /etc/init.d/network restart"
-        exit 1
-    fi
-
-    if ! /etc/init.d/dnsmasq restart; then
-        log_msg "WARNING: DHCP restart failed - LAN may work but no DHCP"
-    fi
+    /etc/init.d/network restart
+    /etc/init.d/dnsmasq restart
     
     log_msg "═══════════════════════════════════════════════════"
     log_msg "✓ EMERGENCY RESTORE COMPLETE"

@@ -45,9 +45,18 @@ start_service() {
     # Verify MPTCP availability before starting
     if ! verify_mptcp; then
         logger -t mptcp-manager -p daemon.warning "WARNING: MPTCP not available in kernel - bonding may not work"
-        logger -t mptcp-manager -p daemon.warning "Check kernel config and ensure MPTCP modules are loaded"
+        logger -t mptcp-manager -p daemon.warning "Ensure you're using an MPTCP-enabled kernel (check /proc/sys/net/mptcp/enabled)"
+        logger -t mptcp-manager -p daemon.warning "Path management will still run but MPTCP subflows won't function"
     else
-        logger -t mptcp-manager -p daemon.info "MPTCP kernel support detected"
+        # Log MPTCP enabled state
+        local mptcp_enabled=0
+        [ -f /proc/sys/net/mptcp/enabled ] && mptcp_enabled=$(cat /proc/sys/net/mptcp/enabled)
+        [ -f /proc/sys/net/mptcp/mptcp_enabled ] && mptcp_enabled=$(cat /proc/sys/net/mptcp/mptcp_enabled)
+        if [ "$mptcp_enabled" = "1" ]; then
+            logger -t mptcp-manager -p daemon.info "MPTCP kernel support detected and enabled"
+        else
+            logger -t mptcp-manager -p daemon.warning "MPTCP kernel support detected but DISABLED (enable via sysctl)"
+        fi
     fi
 
     # Create state directories
