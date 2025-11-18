@@ -163,8 +163,11 @@ ENDSS
     INTERFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -n1)
     
     # SECURITY FIX: Save existing rules before flushing
+    # Use mktemp to avoid predictable temp file names (symlink attacks)
     echo -e "${CYAN}Backing up existing firewall rules...${NC}"
-    iptables-save > /tmp/iptables-backup-$$.rules 2>/dev/null || true
+    IPTABLES_BACKUP=$(mktemp /tmp/iptables-backup-XXXXXX.rules)
+    chmod 600 "$IPTABLES_BACKUP"
+    iptables-save > "$IPTABLES_BACKUP" 2>/dev/null || true
 
     # Flush with safety net - keep SSH access
     iptables -F > /dev/null 2>&1 || true
@@ -382,10 +385,23 @@ elif [ "$DEVICE_TYPE" = "router" ]; then
                 exit 1
             fi
 
-            # Validate each octet is 0-255
+            # Validate exactly 4 octets
+            octet_count=$(echo "$VPS_IP" | tr -cd '.' | wc -c)
+            if [ "$octet_count" -ne 3 ]; then
+                echo -e "${RED}Error: Invalid IP address format (must have 4 octets)${NC}"
+                exit 1
+            fi
+
+            # Validate each octet is numeric and 0-255
             for octet in $(echo "$VPS_IP" | tr '.' ' '); do
-                if [ "$octet" -lt 0 ] 2>/dev/null || [ "$octet" -gt 255 ] 2>/dev/null; then
-                    echo -e "${RED}Error: Invalid IP address (octets must be 0-255)${NC}"
+                # Check if octet is numeric
+                if ! echo "$octet" | grep -qE '^[0-9]+$'; then
+                    echo -e "${RED}Error: Invalid IP address (non-numeric octet: $octet)${NC}"
+                    exit 1
+                fi
+                # Check range (0-255)
+                if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+                    echo -e "${RED}Error: Invalid IP address (octet out of range: $octet)${NC}"
                     exit 1
                 fi
             done
@@ -447,12 +463,15 @@ elif [ "$DEVICE_TYPE" = "router" ]; then
     fi
     
     echo ""
+    # SECURITY FIX: Mask password without exposing it in process listing
+    masked_password=$(printf '%*s' "${#VPS_PASS}" | tr ' ' '*')
+
     echo -e "${GREEN}╔════════════════════════════════════╗${NC}"
     echo -e "${GREEN}║  Configuration Summary             ║${NC}"
     echo -e "${GREEN}╠════════════════════════════════════╣${NC}"
     echo -e "${GREEN}║${NC} VPS IP:   ${YELLOW}$VPS_IP${NC}"
     echo -e "${GREEN}║${NC} Port:     ${YELLOW}$VPS_PORT${NC}"
-    echo -e "${GREEN}║${NC} Password: ${YELLOW}$(echo $VPS_PASS | sed 's/./*/g')${NC}"
+    echo -e "${GREEN}║${NC} Password: ${YELLOW}${masked_password}${NC}"
     echo -e "${GREEN}╚════════════════════════════════════╝${NC}"
     echo ""
     

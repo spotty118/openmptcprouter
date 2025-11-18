@@ -95,16 +95,29 @@ setup_vps() {
     print_step "Downloading VPS wizard..."
 
     # Download and run the VPS wizard
+    # SECURITY FIX: Download to temp file first to allow inspection
     WIZARD_URL="https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/vps-scripts/wizard.sh"
+    TEMP_WIZARD=$(mktemp)
+    chmod 700 "$TEMP_WIZARD"
+    trap "rm -f '$TEMP_WIZARD'" EXIT INT TERM
 
     if command -v curl &> /dev/null; then
-        curl -sSL "$WIZARD_URL" | bash
+        if ! curl -sSL -o "$TEMP_WIZARD" "$WIZARD_URL"; then
+            print_error "Failed to download VPS wizard"
+            exit 1
+        fi
     elif command -v wget &> /dev/null; then
-        wget -O- "$WIZARD_URL" | bash
+        if ! wget -qO "$TEMP_WIZARD" "$WIZARD_URL"; then
+            print_error "Failed to download VPS wizard"
+            exit 1
+        fi
     else
         print_error "Neither curl nor wget found. Please install one of them."
         exit 1
     fi
+
+    chmod +x "$TEMP_WIZARD"
+    bash "$TEMP_WIZARD"
 
     # Check if wizard completed successfully
     if [ $? -eq 0 ]; then
@@ -166,13 +179,33 @@ setup_router() {
             fi
 
             # Download and run client auto-setup
+            # SECURITY FIX: Download to temp file first, then pass credentials via environment
             CLIENT_SETUP_URL="https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/scripts/client-auto-setup.sh"
+            TEMP_SCRIPT=$(mktemp)
+            chmod 700 "$TEMP_SCRIPT"
+            trap "rm -f '$TEMP_SCRIPT'" EXIT INT TERM
 
+            print_step "Downloading client setup script..."
             if command -v curl &> /dev/null; then
-                curl -sSL "$CLIENT_SETUP_URL" | sh -s "$VPS_IP" "$VPS_PASS"
+                if ! curl -sSL -o "$TEMP_SCRIPT" "$CLIENT_SETUP_URL"; then
+                    print_error "Failed to download setup script"
+                    exit 1
+                fi
             elif command -v wget &> /dev/null; then
-                wget -O- "$CLIENT_SETUP_URL" | sh -s "$VPS_IP" "$VPS_PASS"
+                if ! wget -qO "$TEMP_SCRIPT" "$CLIENT_SETUP_URL"; then
+                    print_error "Failed to download setup script"
+                    exit 1
+                fi
+            else
+                print_error "Neither curl nor wget found"
+                exit 1
             fi
+
+            # SECURITY: Pass credentials via environment to avoid process listing exposure
+            chmod +x "$TEMP_SCRIPT"
+            export OMR_VPS_IP="$VPS_IP"
+            export OMR_VPS_PASS="$VPS_PASS"
+            "$TEMP_SCRIPT" "$VPS_IP" "$VPS_PASS"
             ;;
         *)
             print_error "Invalid selection"
@@ -181,17 +214,28 @@ setup_router() {
     esac
 }
 
-# Get public IP
+# Get public IP with proper timeouts
 get_public_ip() {
     local ip=""
+    local services="ifconfig.me icanhazip.com ipinfo.io/ip api.ipify.org"
 
-    # Try multiple services
-    ip=$(curl -s -4 ifconfig.me 2>/dev/null) || \
-    ip=$(curl -s -4 icanhazip.com 2>/dev/null) || \
-    ip=$(curl -s -4 ipinfo.io/ip 2>/dev/null) || \
-    ip=$(wget -qO- -4 ifconfig.me 2>/dev/null)
+    for service in $services; do
+        if ip=$(curl -4 -s --max-time 5 "https://$service" 2>/dev/null) && [ -n "$ip" ]; then
+            # Validate IP format
+            if echo "$ip" | grep -qE '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+                echo "$ip"
+                return 0
+            fi
+        fi
+    done
 
-    echo "$ip"
+    # Fallback with wget
+    if ip=$(wget -qO- -4 --timeout=5 "https://ifconfig.me" 2>/dev/null) && [ -n "$ip" ]; then
+        echo "$ip"
+        return 0
+    fi
+
+    return 1
 }
 
 # Show quick help

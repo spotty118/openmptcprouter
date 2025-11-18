@@ -68,7 +68,12 @@ if [ -z "$emergency_port" ]; then
         emergency_port=$(uci -q get "network.$last_wan.device")
         if [ -n "$emergency_port" ]; then
             log_msg "Taking WAN port $emergency_port for emergency LAN"
-            uci delete "network.$last_wan"
+            # SAFETY: Check delete succeeds before continuing
+            if ! uci delete "network.$last_wan" 2>/dev/null; then
+                log_msg "WARNING: Failed to delete interface $last_wan"
+            fi
+        else
+            log_msg "WARNING: Could not get device for interface $last_wan"
         fi
     fi
 fi
@@ -77,14 +82,18 @@ fi
 if [ -z "$emergency_port" ]; then
     log_msg "No ports available - assigning ALL ports to LAN"
 
-    # Delete all WANs
+    # Delete all WANs with error handling
     if type get_wan_interfaces >/dev/null 2>&1; then
         for wan in $(get_wan_interfaces); do
-            uci delete "network.$wan"
+            if ! uci delete "network.$wan" 2>/dev/null; then
+                log_msg "WARNING: Failed to delete WAN $wan"
+            fi
         done
     else
         for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
-            uci delete "network.$wan"
+            if ! uci delete "network.$wan" 2>/dev/null; then
+                log_msg "WARNING: Failed to delete WAN $wan"
+            fi
         done
     fi
     
