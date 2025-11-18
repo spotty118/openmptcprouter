@@ -19,10 +19,19 @@ log_msg() {
 check_running() {
     # Use atomic mkdir for lock to prevent race condition
     local lockdir="${PID_FILE}.lock"
-    if ! mkdir "$lockdir" 2>/dev/null; then
-        # Another instance is starting, wait and check
+    local max_lock_wait=5
+    local lock_wait=0
+
+    while ! mkdir "$lockdir" 2>/dev/null; do
+        # Another instance is starting, wait with timeout
         sleep 1
-    fi
+        lock_wait=$((lock_wait + 1))
+        if [ "$lock_wait" -ge "$max_lock_wait" ]; then
+            # Stale lock, remove it
+            log_msg "Removing stale lock after ${max_lock_wait}s"
+            rmdir "$lockdir" 2>/dev/null
+        fi
+    done
 
     if [ -f "$PID_FILE" ]; then
         local old_pid

@@ -15,6 +15,9 @@ BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
 
+# Maximum metric value to prevent unbounded growth
+MAX_METRIC=9999
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$METRICS_DIR"
 
@@ -183,16 +186,26 @@ apply_metric_penalty() {
         if [ -n "$uci_section" ]; then
             current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
             local new_metric=$((current_metric + penalty))
+            # Cap metric to prevent unbounded growth
+            [ "$new_metric" -gt "$MAX_METRIC" ] && new_metric=$MAX_METRIC
             uci set network.${uci_section}.metric="$new_metric"
-            uci commit network
+            if ! uci commit network; then
+                log_warn "Failed to commit metric penalty for $iface"
+                return 1
+            fi
             mark_penalty_applied "$iface" "$penalty_type"
             log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
         fi
     else
         local new_metric=$((current_metric + penalty))
+        # Cap metric to prevent unbounded growth
+        [ "$new_metric" -gt "$MAX_METRIC" ] && new_metric=$MAX_METRIC
         uci set network.${iface}.metric="$new_metric"
-        uci commit network
+        if ! uci commit network; then
+            log_warn "Failed to commit metric penalty for $iface"
+            return 1
+        fi
         mark_penalty_applied "$iface" "$penalty_type"
         log_warn "Applied $penalty metric penalty to $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0
@@ -227,7 +240,10 @@ remove_metric_penalty() {
             local new_metric=$((current_metric - penalty))
             [ "$new_metric" -lt 1 ] && new_metric=1
             uci set network.${uci_section}.metric="$new_metric"
-            uci commit network
+            if ! uci commit network; then
+                log_warn "Failed to commit metric penalty removal for $iface"
+                return 1
+            fi
             mark_penalty_removed "$iface" "$penalty_type"
             log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
@@ -236,7 +252,10 @@ remove_metric_penalty() {
         local new_metric=$((current_metric - penalty))
         [ "$new_metric" -lt 1 ] && new_metric=1
         uci set network.${iface}.metric="$new_metric"
-        uci commit network
+        if ! uci commit network; then
+            log_warn "Failed to commit metric penalty removal for $iface"
+            return 1
+        fi
         mark_penalty_removed "$iface" "$penalty_type"
         log_info "Removed $penalty metric penalty from $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0
