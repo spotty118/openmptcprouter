@@ -302,6 +302,53 @@ omr_get_public_ip_interactive() {
 }
 
 #
+# Network download with retry
+#
+
+omr_download_with_retry() {
+    local url="$1"
+    local output="$2"
+    local max_retries="${3:-4}"
+    local retry=0
+    local wait_time=2
+
+    while [ "$retry" -lt "$max_retries" ]; do
+        if curl -sSL --connect-timeout 10 --max-time 120 "$url" -o "$output" 2>/dev/null; then
+            return 0
+        fi
+        retry=$((retry + 1))
+        if [ "$retry" -lt "$max_retries" ]; then
+            omr_log_warning "Download failed, retrying in ${wait_time}s (attempt $((retry+1))/${max_retries})..."
+            sleep "$wait_time"
+            wait_time=$((wait_time * 2))
+        fi
+    done
+    omr_log_error "Download failed after ${max_retries} attempts: $url"
+    return 1
+}
+
+omr_fetch_url() {
+    local url="$1"
+    local max_retries="${2:-4}"
+    local retry=0
+    local wait_time=2
+    local result
+
+    while [ "$retry" -lt "$max_retries" ]; do
+        if result=$(curl -sSL --connect-timeout 10 --max-time 60 "$url" 2>/dev/null) && [ -n "$result" ]; then
+            echo "$result"
+            return 0
+        fi
+        retry=$((retry + 1))
+        if [ "$retry" -lt "$max_retries" ]; then
+            sleep "$wait_time"
+            wait_time=$((wait_time * 2))
+        fi
+    done
+    return 1
+}
+
+#
 # UCI Configuration Management (OpenWrt only)
 #
 

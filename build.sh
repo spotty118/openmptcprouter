@@ -55,6 +55,47 @@ OMR_OPENWRT=${OMR_OPENWRT:-default}
 OMR_OPENWRT_GIT=${OMR_OPENWRT_GIT:-https://github.com}
 OMR_FORCE_DSA=${OMR_FORCE_DSA:-0}
 
+# Validate critical build parameters
+echo "Validating build parameters..."
+
+# Validate kernel version
+case "$OMR_KERNEL" in
+    5.4|6.1|6.6|6.10|6.11|6.12|6.17)
+        ;;
+    *)
+        echo "ERROR: Invalid kernel version: $OMR_KERNEL"
+        echo "Supported versions: 5.4, 6.1, 6.6, 6.10, 6.11, 6.12, 6.17"
+        exit 1
+        ;;
+esac
+
+# Validate package set
+case "$OMR_PACKAGES" in
+    full|minimal)
+        ;;
+    *)
+        echo "ERROR: Invalid package set: $OMR_PACKAGES"
+        echo "Supported values: full, minimal"
+        exit 1
+        ;;
+esac
+
+# Validate boolean-like parameters
+for param_name in OMR_KEEPBIN OMR_IMG OMR_LOG OMR_ALL_PACKAGES SHORTCUT_FE DISABLE_FAILSAFE; do
+    eval param_value=\$$param_name
+    case "$param_value" in
+        yes|no)
+            ;;
+        *)
+            echo "ERROR: Invalid value for $param_name: $param_value"
+            echo "Expected: yes or no"
+            exit 1
+            ;;
+    esac
+done
+
+echo "✓ Build parameters validated"
+
 # Validate required dependencies
 echo "Validating build dependencies..."
 MISSING_DEPS=""
@@ -552,8 +593,8 @@ echo "Done"
 #fi
 #echo "Done"
 
-# Add BBR2 patch, only working on 64bits images for now
-if ([ "$OMR_KERNEL" = "5.4" ] || [ "$OMR_KERNEL" = "5.4" ]) && ([ "$OMR_TARGET" = "x86_64" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "rpi4" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "rpi3" ]); then
+# Add BBR2 patch, only working on 64bits images for kernel 5.4
+if [ "$OMR_KERNEL" = "5.4" ] && ([ "$OMR_TARGET" = "x86_64" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "rpi4" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "rpi3" ]); then
 	echo "Checking if BBRv2 patch is set or not"
 	if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/bbr2.patch; then
 		echo "apply..."

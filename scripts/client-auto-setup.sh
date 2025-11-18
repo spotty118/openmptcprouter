@@ -216,14 +216,32 @@ echo -e "${GREEN}      Routing configured${NC}"
 echo ""
 echo -e "${CYAN}[6/6]${NC} Applying configuration and restarting services..."
 
-# Reload services
-/etc/init.d/network reload > /dev/null 2>&1 &
+# Reload services with proper error checking
+echo -e "${BLUE}      Reloading network...${NC}"
+if /etc/init.d/network reload > /dev/null 2>&1; then
+    echo -e "${GREEN}      Network reloaded${NC}"
+else
+    echo -e "${YELLOW}      Warning: Network reload may have failed${NC}"
+fi
 sleep 2
-/etc/init.d/firewall reload > /dev/null 2>&1 &
-sleep 1
-/etc/init.d/shadowsocks-libev restart > /dev/null 2>&1 &
 
-echo -e "${GREEN}      Services restarted${NC}"
+echo -e "${BLUE}      Reloading firewall...${NC}"
+if /etc/init.d/firewall reload > /dev/null 2>&1; then
+    echo -e "${GREEN}      Firewall reloaded${NC}"
+else
+    echo -e "${YELLOW}      Warning: Firewall reload may have failed${NC}"
+fi
+sleep 1
+
+echo -e "${BLUE}      Restarting Shadowsocks...${NC}"
+if /etc/init.d/shadowsocks-libev restart > /dev/null 2>&1; then
+    echo -e "${GREEN}      Shadowsocks restarted${NC}"
+else
+    echo -e "${YELLOW}      Warning: Shadowsocks restart may have failed${NC}"
+    echo -e "${YELLOW}      You may need to manually start it: /etc/init.d/shadowsocks-libev start${NC}"
+fi
+
+echo -e "${GREEN}      Services configuration complete${NC}"
 
 # Create connection test script
 cat > /usr/bin/omr-test << 'TESTEOF'
