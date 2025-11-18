@@ -207,7 +207,7 @@ curl -sSL https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/sc
 
 ### Network Optimization
 - MPTCP enabled for multi-WAN bonding
-- BBR2 congestion control
+- BBR congestion control
 - Optimized TCP buffer sizes
 - Connection tracking for high throughput
 

@@ -26,7 +26,7 @@ That's it! The script will:
 ### On Your VPS
 - Fully configured MPTCP server
 - Shadowsocks VPN ready to use
-- Optimized BBR2 congestion control
+- Optimized BBR congestion control
 - Secure firewall rules
 - Easy-to-use web interface
 

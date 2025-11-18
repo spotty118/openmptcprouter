@@ -316,8 +316,8 @@ net.mptcp.mptcp_syn_retries = 3
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2 Congestion Control
-net.ipv4.tcp_congestion_control = bbr2
+# BBR Congestion Control
+net.ipv4.tcp_congestion_control = bbr
 net.core.default_qdisc = fq_codel
 
 # Network Performance Tuning - Enhanced for Multi-WAN
