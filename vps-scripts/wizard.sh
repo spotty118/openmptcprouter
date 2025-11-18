@@ -316,16 +316,20 @@ net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 
 # MPTCP Configuration - Enhanced for Multi-WAN Bonding
+# Compatible with both MPTCP v0 (legacy) and v1 (upstream kernel 5.10+)
+net.mptcp.enabled = 1
+net.mptcp.checksum_enabled = 0
+net.mptcp.allow_join_initial_addr_port = 1
+# Legacy parameters for older kernels (ignored on modern kernels)
 net.mptcp.mptcp_enabled = 1
 net.mptcp.mptcp_checksum = 0
-net.mptcp.mptcp_debug = 0
 net.mptcp.mptcp_syn_retries = 3
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2 Congestion Control (fq qdisc required for optimal BBR performance)
-net.ipv4.tcp_congestion_control = bbr2
-# Use FQ qdisc for BBR (matches client config)
+# BBR Congestion Control (fq qdisc required for optimal BBR performance)
+# Actual algorithm selected at runtime below (detects BBR2, falls back to BBR, then CUBIC)
+# Use FQ qdisc for BBR
 net.core.default_qdisc = fq
 
 # Network Performance Tuning - Enhanced for Multi-WAN
@@ -335,8 +339,14 @@ net.core.wmem_max = 134217728
 net.core.rmem_default = 67108864
 net.core.wmem_default = 67108864
 net.core.netdev_max_backlog = 250000
+net.core.netdev_budget = 600
+net.core.netdev_budget_usecs = 8000
 net.core.somaxconn = 4096
 net.core.optmem_max = 65536
+
+# UDP optimizations for QUIC and real-time protocols
+net.ipv4.udp_rmem_min = 16384
+net.ipv4.udp_wmem_min = 16384
 
 # TCP Performance - Optimized for Multiple Connections
 net.ipv4.tcp_rmem = 4096 131072 134217728
@@ -345,6 +355,7 @@ net.ipv4.tcp_max_syn_backlog = 16384
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
+net.ipv4.tcp_max_tw_buckets = 2000000
 # TCP keepalive - AGGRESSIVE for WAN bonding failover
 # Must match client settings for consistent failover detection
 net.ipv4.tcp_keepalive_time = 20
@@ -374,11 +385,18 @@ net.ipv4.fib_multipath_use_neigh = 1
 net.ipv4.tcp_no_metrics_save = 1
 net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_frto = 2
+net.ipv4.tcp_early_retrans = 3
 net.ipv4.tcp_mtu_probing = 1
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_sack = 1
-net.ipv4.tcp_fack = 1
+net.ipv4.tcp_dsack = 1
 net.ipv4.tcp_timestamps = 1
+
+# Faster failover for multi-WAN (reduced from kernel defaults)
+net.ipv4.tcp_retries1 = 3
+net.ipv4.tcp_retries2 = 8
+net.ipv4.tcp_orphan_retries = 0
+net.ipv4.tcp_base_mss = 1400
 
 # Increase connection tracking table size for multi-WAN
 net.nf_conntrack_max = 262144
@@ -398,6 +416,14 @@ net.ipv4.icmp_ignore_bogus_error_responses = 1
 net.ipv6.conf.all.accept_redirects = 0
 net.ipv6.conf.all.accept_source_route = 0
 
+# ARP and neighbor cache optimizations for multiple interfaces
+net.ipv4.neigh.default.gc_thresh1 = 2048
+net.ipv4.neigh.default.gc_thresh2 = 4096
+net.ipv4.neigh.default.gc_thresh3 = 8192
+net.ipv6.neigh.default.gc_thresh1 = 2048
+net.ipv6.neigh.default.gc_thresh2 = 4096
+net.ipv6.neigh.default.gc_thresh3 = 8192
+
 # Kernel panic behavior for stability
 kernel.panic = 10
 kernel.panic_on_oops = 1
@@ -410,6 +436,18 @@ vm.dirty_background_ratio = 2
 # File descriptor limits
 fs.file-max = 2097152
 SYSCTL
+
+# Detect and set BBR2 or BBR congestion control
+if grep -q bbr2 /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+    echo "net.ipv4.tcp_congestion_control = bbr2" >> /etc/sysctl.d/99-openmptcprouter.conf
+    print_info "Using BBR2 congestion control"
+elif grep -q bbr /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null; then
+    echo "net.ipv4.tcp_congestion_control = bbr" >> /etc/sysctl.d/99-openmptcprouter.conf
+    print_warning "BBR2 not available, using BBR"
+else
+    echo "net.ipv4.tcp_congestion_control = cubic" >> /etc/sysctl.d/99-openmptcprouter.conf
+    print_warning "BBR not available, using CUBIC"
+fi
 
 # Apply sysctl settings
 sysctl -p /etc/sysctl.d/99-openmptcprouter.conf > /dev/null 2>&1 || print_warning "Some kernel parameters could not be applied"
@@ -571,7 +609,10 @@ ENDCONFIG
 chmod 600 /etc/openmptcprouter/config.json
 
 # Save credentials to file for later reference
-cat > /root/openmptcprouter_credentials.txt << ENDCREDS
+# Use subshell with umask to create file with secure permissions from the start
+(
+    umask 077
+    cat > /root/openmptcprouter_credentials.txt << ENDCREDS
 OpenMPTCProuter Optimized - VPS Credentials
 ============================================
 Installation Date: $(date)
@@ -605,8 +646,7 @@ On your router:
 5. Encryption: Shadowsocks (chacha20-ietf-poly1305)
 6. Save & Apply
 ENDCREDS
-
-chmod 600 /root/openmptcprouter_credentials.txt
+)
 
 print_success "Configuration saved"
 
