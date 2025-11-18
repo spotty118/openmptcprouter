@@ -471,27 +471,11 @@ check_path_degradation() {
     fi
 }
 
-# Clean up stale state files for interfaces that no longer exist
-cleanup_stale_states() {
-    for state_file in "$STATE_DIR"/*; do
-        [ -f "$state_file" ] || continue
-        local basename=$(basename "$state_file")
-        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
-        case "$basename" in
-            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
-        esac
-        # Check if interface still exists
-        if [ ! -e "/sys/class/net/$basename" ]; then
-            log_info "Cleaning up stale state for removed interface: $basename"
-            rm -f "$STATE_DIR/${basename}"*
-        fi
-    done
-}
-
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
+    # Use glob directly instead of ls for efficiency and POSIX compliance
     for iface_path in /sys/class/net/*; do
         [ -e "$iface_path" ] || continue
         local iface=$(basename "$iface_path")

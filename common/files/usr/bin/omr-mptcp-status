@@ -1,0 +1,248 @@
+#!/bin/sh
+# MPTCP Bonding Status - Shows current state of all WAN paths
+# Part of OpenMPTCProuter bonding behavior improvements
+
+STATE_DIR="/var/run/mptcp-paths"
+METRICS_DIR="/var/run/mptcp-metrics"
+
+# Colors for terminal output (disabled if not a tty)
+if [ -t 1 ]; then
+    RED='\033[0;31m'
+    GREEN='\033[0;32m'
+    YELLOW='\033[0;33m'
+    BLUE='\033[0;34m'
+    NC='\033[0m' # No Color
+else
+    RED=''
+    GREEN=''
+    YELLOW=''
+    BLUE=''
+    NC=''
+fi
+
+print_header() {
+    echo "========================================================"
+    echo "       MPTCP Bonding Status - $(date '+%Y-%m-%d %H:%M:%S')"
+    echo "========================================================"
+    echo ""
+}
+
+# Check if interface is a WAN interface
+is_wan_interface() {
+    local iface=$1
+
+    # Skip non-WAN interfaces
+    case "$iface" in
+        lo|br-*|eth0.1|wlan*client|ifb*|sit*|ip6tnl*) return 1 ;;
+    esac
+
+    # Check if interface has multipath enabled in UCI
+    local multipath=$(uci get network.${iface}.multipath 2>/dev/null)
+    if [ "$multipath" = "on" ]; then
+        return 0
+    fi
+
+    # Check if it's a typical WAN interface name
+    case "$iface" in
+        wan*|wwan*|eth1|eth2|eth3|usb*) return 0 ;;
+    esac
+
+    return 1
+}
+
+# Get path status
+get_path_status() {
+    local iface=$1
+    local status="HEALTHY"
+    local details=""
+
+    # Check operstate
+    local operstate=$(cat /sys/class/net/$iface/operstate 2>/dev/null || echo "unknown")
+
+    if [ "$operstate" != "up" ]; then
+        status="DOWN"
+        details="operstate=$operstate"
+    fi
+
+    # Check blacklist
+    if [ -f "$STATE_DIR/${iface}.blacklist" ]; then
+        local bl_start=$(cat "$STATE_DIR/${iface}.blacklist" 2>/dev/null)
+        local now=$(date +%s)
+        local bl_age=$((now - bl_start))
+        status="BLACKLISTED"
+        details="for ${bl_age}s"
+    fi
+
+    # Check degraded
+    if [ -f "$STATE_DIR/${iface}.degraded" ]; then
+        if [ "$status" = "HEALTHY" ]; then
+            status="DEGRADED"
+        fi
+    fi
+
+    # Check penalties
+    local penalties=""
+    for pfile in "$STATE_DIR/${iface}.penalty_"*; do
+        [ -f "$pfile" ] || continue
+        local ptype=$(basename "$pfile" | sed 's/.*\.penalty_//')
+        penalties="${penalties}${ptype},"
+    done
+    if [ -n "$penalties" ]; then
+        penalties="${penalties%,}"
+        if [ -n "$details" ]; then
+            details="$details, penalties=$penalties"
+        else
+            details="penalties=$penalties"
+        fi
+    fi
+
+    echo "$status|$details"
+}
+
+# Get metrics for interface
+get_metrics() {
+    local iface=$1
+    local metrics_file="$METRICS_DIR/${iface}.current"
+
+    if [ ! -f "$metrics_file" ]; then
+        echo "N/A|N/A|N/A|N/A"
+        return
+    fi
+
+    # Format: iface|timestamp|rx_packets|tx_packets|rx_bytes|tx_bytes|rx_errors|tx_errors|loss_rate|signal_strength|signal_quality|throughput_rx|throughput_tx|speed|mtu|rx_dropped|tx_dropped
+    local data=$(cat "$metrics_file")
+    local loss_rate=$(echo "$data" | cut -d'|' -f9)
+    local throughput_rx=$(echo "$data" | cut -d'|' -f12)
+    local throughput_tx=$(echo "$data" | cut -d'|' -f13)
+    local signal=$(echo "$data" | cut -d'|' -f10)
+
+    # Convert loss rate to percentage
+    if [ -n "$loss_rate" ] && [ "$loss_rate" != "N/A" ]; then
+        local loss_pct=$((loss_rate / 100))
+        local loss_frac=$((loss_rate % 100))
+        loss_rate="${loss_pct}.$(printf "%02d" $loss_frac)%"
+    else
+        loss_rate="N/A"
+    fi
+
+    # Convert throughput to human readable
+    if [ -n "$throughput_rx" ] && [ "$throughput_rx" != "0" ]; then
+        throughput_rx="$((throughput_rx * 8 / 1000))Kbps"
+    else
+        throughput_rx="0Kbps"
+    fi
+
+    if [ -n "$throughput_tx" ] && [ "$throughput_tx" != "0" ]; then
+        throughput_tx="$((throughput_tx * 8 / 1000))Kbps"
+    else
+        throughput_tx="0Kbps"
+    fi
+
+    echo "$loss_rate|$throughput_rx|$throughput_tx|$signal"
+}
+
+# Get metric from UCI
+get_uci_metric() {
+    local iface=$1
+    local metric=$(uci get network.${iface}.metric 2>/dev/null)
+
+    # If not found directly, try finding interface
+    if [ -z "$metric" ]; then
+        local uci_section=$(uci show network 2>/dev/null | grep "device='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+        if [ -n "$uci_section" ]; then
+            metric=$(uci get network.${uci_section}.metric 2>/dev/null)
+        fi
+    fi
+
+    echo "${metric:-N/A}"
+}
+
+# Print interface status
+print_interface() {
+    local iface=$1
+    local status_data=$(get_path_status "$iface")
+    local status=$(echo "$status_data" | cut -d'|' -f1)
+    local details=$(echo "$status_data" | cut -d'|' -f2)
+
+    local metrics_data=$(get_metrics "$iface")
+    local loss=$(echo "$metrics_data" | cut -d'|' -f1)
+    local rx=$(echo "$metrics_data" | cut -d'|' -f2)
+    local tx=$(echo "$metrics_data" | cut -d'|' -f3)
+    local signal=$(echo "$metrics_data" | cut -d'|' -f4)
+
+    local metric=$(get_uci_metric "$iface")
+
+    # Status color
+    local status_color="$NC"
+    case "$status" in
+        HEALTHY) status_color="$GREEN" ;;
+        DEGRADED) status_color="$YELLOW" ;;
+        DOWN|BLACKLISTED) status_color="$RED" ;;
+    esac
+
+    printf "%-12s ${status_color}%-12s${NC} metric=%-4s loss=%-8s rx=%-12s tx=%-12s" \
+        "$iface" "$status" "$metric" "$loss" "$rx" "$tx"
+
+    if [ "$signal" != "N/A" ] && [ -n "$signal" ]; then
+        printf " signal=%s" "$signal"
+    fi
+
+    if [ -n "$details" ]; then
+        printf "\n             ${BLUE}-> %s${NC}" "$details"
+    fi
+
+    echo ""
+}
+
+# Main
+main() {
+    print_header
+
+    # Check if services are running
+    if ! pgrep -f mptcp-path-manager >/dev/null 2>&1; then
+        echo "${YELLOW}WARNING: mptcp-path-manager is not running${NC}"
+        echo "Start with: /etc/init.d/mptcp-manager start"
+        echo ""
+    fi
+
+    if ! pgrep -f mptcp-metrics-exporter >/dev/null 2>&1; then
+        echo "${YELLOW}WARNING: mptcp-metrics-exporter is not running${NC}"
+        echo ""
+    fi
+
+    echo "WAN Interfaces:"
+    echo "--------------------------------------------------------"
+
+    local found=0
+    for iface_path in /sys/class/net/*; do
+        [ -e "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
+        if is_wan_interface "$iface"; then
+            print_interface "$iface"
+            found=$((found + 1))
+        fi
+    done
+
+    if [ $found -eq 0 ]; then
+        echo "No WAN interfaces found with multipath enabled"
+    fi
+
+    echo ""
+    echo "--------------------------------------------------------"
+    echo "Dirs: state=$STATE_DIR metrics=$METRICS_DIR"
+    echo ""
+
+    # Show MPTCP kernel status
+    if [ -f /proc/sys/net/mptcp/enabled ]; then
+        local mptcp_enabled=$(cat /proc/sys/net/mptcp/enabled)
+        if [ "$mptcp_enabled" = "1" ]; then
+            echo "${GREEN}MPTCP: enabled${NC}"
+        else
+            echo "${RED}MPTCP: disabled${NC}"
+        fi
+    else
+        echo "${YELLOW}MPTCP: kernel support not detected${NC}"
+    fi
+}
+
+main "$@"
