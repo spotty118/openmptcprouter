@@ -143,6 +143,20 @@ detect_usb_modems() {
     echo "$modems" | xargs
 }
 
+# Validate device path to prevent path traversal and command injection
+validate_device_path() {
+    local path="$1"
+    # Must start with /dev/ and contain only safe characters
+    echo "$path" | grep -qE '^/dev/[a-zA-Z0-9_-]+$'
+}
+
+# Validate UCI value to prevent injection
+validate_uci_value() {
+    local value="$1"
+    # Reject values with shell metacharacters
+    ! echo "$value" | grep -qE '[`$;|&<>(){}]'
+}
+
 # Get modem information (signal, carrier, etc.)
 get_modem_info() {
     local proto="$1"
@@ -150,7 +164,7 @@ get_modem_info() {
     local dev="$3"
 
     # Validate device path
-    if [ -n "$dev" ] && ! echo "$dev" | grep -qE '^/dev/[a-zA-Z0-9_-]+$'; then
+    if [ -n "$dev" ] && ! validate_device_path "$dev"; then
         echo "Type: $proto (invalid device path)"
         return
     fi
@@ -222,7 +236,17 @@ configure_modem_as_wan() {
     local username=$(echo "$apn_settings" | cut -d: -f2)
     local password=$(echo "$apn_settings" | cut -d: -f3)
     local auth_type=$(echo "$apn_settings" | cut -d: -f4)
-    
+
+    # Validate critical values before using in UCI commands
+    if [ -n "$dev" ] && ! validate_device_path "$dev"; then
+        log_msg "ERROR: Invalid device path for $wan_name: $dev"
+        return 1
+    fi
+    if [ -n "$apn" ] && ! validate_uci_value "$apn"; then
+        log_msg "ERROR: Invalid APN value for $wan_name: $apn"
+        return 1
+    fi
+
     # Configure based on protocol
     case "$proto" in
         qmi)
@@ -384,7 +408,7 @@ cleanup_disconnected_modems() {
         device=$(uci -q get "network.$wan.device")
 
         # Validate device path
-        if [ -n "$device" ] && ! echo "$device" | grep -qE '^/dev/[a-zA-Z0-9_-]+$'; then
+        if [ -n "$device" ] && ! validate_device_path "$device"; then
             log_msg "WARNING: Invalid device path for $wan: $device"
             continue
         fi
