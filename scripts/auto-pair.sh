@@ -5,6 +5,17 @@
 #
 # Run on VPS to get pairing code, then use that code on router
 #
+# ⚠️  SECURITY WARNING ⚠️
+# This script exposes credentials via unprotected HTTP on port 9999.
+# The pairing API has NO AUTHENTICATION - anyone with network access
+# to port 9999 can retrieve the Shadowsocks password and server config.
+#
+# RECOMMENDATIONS:
+# 1. Use firewall rules to restrict port 9999 access to known client IPs
+# 2. Stop the omr-autopair service after pairing is complete:
+#    systemctl stop omr-autopair
+# 3. Consider using the wizard.sh script with manual credential transfer
+#
 
 set -e
 
