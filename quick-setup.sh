@@ -9,6 +9,7 @@
 #
 
 set -e
+set -o pipefail
 
 # Color codes for output
 RED='\033[0;31m'
@@ -96,18 +97,35 @@ setup_vps() {
 
     # Download and run the VPS wizard
     WIZARD_URL="https://raw.githubusercontent.com/spotty118/openmptcprouter/develop/vps-scripts/wizard.sh"
+    WIZARD_TMP=$(mktemp /tmp/omr-wizard.XXXXXX.sh)
 
+    # Cleanup temp file on exit
+    trap "rm -f '$WIZARD_TMP'" EXIT
+
+    # Download to temp file first for better error handling
     if command -v curl &> /dev/null; then
-        curl -sSL "$WIZARD_URL" | bash
+        if ! curl -sSL --fail --max-time 60 -o "$WIZARD_TMP" "$WIZARD_URL"; then
+            print_error "Failed to download VPS wizard"
+            exit 1
+        fi
     elif command -v wget &> /dev/null; then
-        wget -O- "$WIZARD_URL" | bash
+        if ! wget -q --timeout=60 -O "$WIZARD_TMP" "$WIZARD_URL"; then
+            print_error "Failed to download VPS wizard"
+            exit 1
+        fi
     else
         print_error "Neither curl nor wget found. Please install one of them."
         exit 1
     fi
 
-    # Check if wizard completed successfully
-    if [ $? -eq 0 ]; then
+    # Verify download succeeded and file is not empty
+    if [ ! -s "$WIZARD_TMP" ]; then
+        print_error "Downloaded wizard file is empty"
+        exit 1
+    fi
+
+    # Execute the wizard
+    if bash "$WIZARD_TMP"; then
         print_success "VPS setup completed!"
         echo ""
         print_info "Next steps:"

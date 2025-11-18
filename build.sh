@@ -28,7 +28,13 @@ _get_repo() (
 )
 
 OMR_DIST=${OMR_DIST:-openmptcprouter}
-OMR_HOST=${OMR_HOST:-$(curl -sS ifconfig.co)}
+# Detect public IP with timeout and fallback
+if [ -z "${OMR_HOST:-}" ]; then
+	OMR_HOST=$(curl -4 -s --max-time 5 ifconfig.co 2>/dev/null || \
+		curl -4 -s --max-time 5 ifconfig.me 2>/dev/null || \
+		curl -4 -s --max-time 5 icanhazip.com 2>/dev/null || \
+		echo "localhost")
+fi
 OMR_PORT=${OMR_PORT:-80}
 OMR_KEEPBIN=${OMR_KEEPBIN:-no}
 OMR_IMG=${OMR_IMG:-yes}
@@ -90,7 +96,12 @@ if [ "$OMR_KERNEL" = "5.4" ] && [ "$OMR_TARGET" = "rutx12" ]; then
 fi
 
 if [ ! -f "$OMR_TARGET_CONFIG" ]; then
-	echo "Target $OMR_TARGET not found !"
+	echo "ERROR: Target '$OMR_TARGET' not found!"
+	echo ""
+	echo "Available targets:"
+	ls -1 config-* 2>/dev/null | sed 's/config-/  - /' || echo "  (no config files found)"
+	echo ""
+	echo "Usage: OMR_TARGET=<target> ./build.sh"
 	exit 1
 fi
 
@@ -102,13 +113,13 @@ elif [ "$OMR_TARGET" = "wrt3200acm" ] || [ "$OMR_TARGET" = "wrt32x" ]; then
 	OMR_REAL_TARGET="arm_cortex-a9_vfpv3-d16"
 elif [ "$OMR_TARGET" = "rpi2" ] || [ "$OMR_TARGET" = "bpi-r1" ] || [ "$OMR_TARGET" = "bpi-r2" ] || [ "$OMR_TARGET" = "rutx" ] || [ "$OMR_TARGET" = "rutx12" ] || [ "$OMR_TARGET" = "rutx50" ] || [ "$OMR_TARGET" = "p2w_r619ac" ]; then
 	OMR_REAL_TARGET="arm_cortex-a7_neon-vfpv4"
-elif [ "$OMR_TARGET" = "rpi3" ] || [ "$OMR_TARGET" = "bpi-r3" ] || [ "$OMR_TARGET" = "bpi-r3-mini" ] || [ "$OMR_TARGET" = "bpi-r4" ] || [ "$OMR_TARGET" = "bpi-r4-poe" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "z8102ax_128m" ] || [ "$OMR_TARGET" = "z8102ax_64m" ] || [ "$OMR_TARGET" = "z8109ax_128m" ] || [ "$OMR_TARGET" = "bpi-r4" ] || [ "$OMR_TARGET" = "bpi-r4-poe" ] || [ "$OMR_TARGET" = "bpi-r3" ] || [ "$OMR_TARGET" = "bpi-r3-mini" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "gl-mt2500" ] || [ "$OMR_TARGET" = "gl-mt6000" ]; then
+elif [ "$OMR_TARGET" = "rpi3" ] || [ "$OMR_TARGET" = "bpi-r3" ] || [ "$OMR_TARGET" = "bpi-r3-mini" ] || [ "$OMR_TARGET" = "bpi-r4" ] || [ "$OMR_TARGET" = "bpi-r4-poe" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "z8102ax_128m" ] || [ "$OMR_TARGET" = "z8102ax_64m" ] || [ "$OMR_TARGET" = "z8109ax_128m" ] || [ "$OMR_TARGET" = "gl-mt2500" ] || [ "$OMR_TARGET" = "gl-mt6000" ]; then
 	OMR_REAL_TARGET="aarch64_cortex-a53"
 elif [ "$OMR_TARGET" = "x86" ]; then
 	OMR_REAL_TARGET="i386_pentium4"
 elif [ "$OMR_TARGET" = "x86_64" ]; then
 	OMR_REAL_TARGET="x86_64"
-elif [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "r5s" ] || [ "$OMR_TARGET" = "armsr64" ]; then
+elif [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "r5s" ] || [ "$OMR_TARGET" = "r5c" ] || [ "$OMR_TARGET" = "r6s" ] || [ "$OMR_TARGET" = "armsr64" ]; then
 	OMR_REAL_TARGET="aarch64_generic"
 elif [ "$OMR_TARGET" = "ubnt-erx" ]; then
 	OMR_REAL_TARGET="mipsel_24kc"
@@ -553,7 +564,7 @@ echo "Done"
 #echo "Done"
 
 # Add BBR2 patch, only working on 64bits images for now
-if ([ "$OMR_KERNEL" = "5.4" ] || [ "$OMR_KERNEL" = "5.4" ]) && ([ "$OMR_TARGET" = "x86_64" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "rpi4" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "rpi3" ]); then
+if [ "$OMR_KERNEL" = "5.4" ] && ([ "$OMR_TARGET" = "x86_64" ] || [ "$OMR_TARGET" = "bpi-r64" ] || [ "$OMR_TARGET" = "rpi4" ] || [ "$OMR_TARGET" = "espressobin" ] || [ "$OMR_TARGET" = "r2s" ] || [ "$OMR_TARGET" = "r4s" ] || [ "$OMR_TARGET" = "rpi3" ]); then
 	echo "Checking if BBRv2 patch is set or not"
 	if ! patch -Rf -N -p1 -s --dry-run < ../../../patches/bbr2.patch; then
 		echo "apply..."

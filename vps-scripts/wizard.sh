@@ -1031,6 +1031,8 @@ sed -i "s|REPLACE_PASSWORD|$SAFE_PASSWORD|g" /var/www/omr-setup/index.html
 sed -i "s|REPLACE_PAIRING_CODE|$SAFE_PAIRING|g" /var/www/omr-setup/index.html
 
 # Create systemd service for web interface
+# SECURITY NOTE: This serves credentials over HTTP without authentication.
+# The service auto-disables after 24 hours for security.
 cat > /etc/systemd/system/omr-setup-web.service << 'ENDSERVICE'
 [Unit]
 Description=OpenMPTCProuter Setup Web Interface
@@ -1039,18 +1041,44 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/var/www/omr-setup
-ExecStart=/usr/bin/python3 -m http.server 8080
+ExecStart=/usr/bin/python3 -m http.server 8080 --bind 0.0.0.0
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 ENDSERVICE
 
+# Create a timer to auto-disable the setup web page after 24 hours for security
+cat > /etc/systemd/system/omr-setup-web-disable.service << 'ENDSERVICE'
+[Unit]
+Description=Disable OpenMPTCProuter Setup Web Interface
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl disable --now omr-setup-web.service
+ExecStart=/bin/rm -f /etc/systemd/system/omr-setup-web-disable.timer
+ENDSERVICE
+
+cat > /etc/systemd/system/omr-setup-web-disable.timer << 'ENDTIMER'
+[Unit]
+Description=Auto-disable setup web interface after 24 hours
+
+[Timer]
+OnActiveSec=24h
+Unit=omr-setup-web-disable.service
+
+[Install]
+WantedBy=timers.target
+ENDTIMER
+
 systemctl daemon-reload
 systemctl enable omr-setup-web > /dev/null 2>&1
 systemctl restart omr-setup-web
+systemctl enable --now omr-setup-web-disable.timer > /dev/null 2>&1
 
 print_success "Setup web page created"
+print_warning "Security: Web setup page will auto-disable in 24 hours"
+print_info "To disable manually: systemctl disable --now omr-setup-web"
 
 # Installation complete
 clear

@@ -190,10 +190,19 @@ omr_validate_ip() {
         local valid=1
         local octet
         for octet in $(echo "$ip" | tr '.' ' '); do
-            if [ "$octet" -lt 0 ] 2>/dev/null || [ "$octet" -gt 255 ] 2>/dev/null; then
-                valid=0
-                break
-            fi
+            # Ensure octet is numeric before comparison
+            case "$octet" in
+                ''|*[!0-9]*)
+                    valid=0
+                    break
+                    ;;
+                *)
+                    if [ "$octet" -gt 255 ]; then
+                        valid=0
+                        break
+                    fi
+                    ;;
+            esac
         done
         [ "$valid" -eq 1 ] && return 0
     fi
