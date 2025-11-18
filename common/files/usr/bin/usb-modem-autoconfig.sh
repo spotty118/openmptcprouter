@@ -73,8 +73,11 @@ get_apn_settings() {
 
     # Get carrier APN from database
     if type get_carrier_apn >/dev/null 2>&1; then
-        local carrier_data=$(get_carrier_apn "$carrier")
-        if [ $? -eq 0 ] && [ -n "$carrier_data" ]; then
+        local carrier_data
+        local carrier_result
+        carrier_data=$(get_carrier_apn "$carrier")
+        carrier_result=$?
+        if [ $carrier_result -eq 0 ] && [ -n "$carrier_data" ]; then
             log_msg "Found carrier APN for '$carrier'"
             if type parse_apn_data >/dev/null 2>&1; then
                 parse_apn_data "$carrier_data"

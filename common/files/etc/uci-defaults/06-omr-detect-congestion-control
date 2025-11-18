@@ -1,0 +1,59 @@
+#!/bin/sh
+#
+# OpenMPTCProuter - Congestion Control Detection
+# Detects available TCP congestion control algorithms and sets the best one
+# Priority: BBR2 > BBR > CUBIC
+#
+
+LOG_TAG="omr-cc-detect"
+
+log_msg() {
+    logger -t "$LOG_TAG" "$1"
+}
+
+# Get available congestion control algorithms
+AVAILABLE_CC=$(cat /proc/sys/net/ipv4/tcp_available_congestion_control 2>/dev/null)
+
+if [ -z "$AVAILABLE_CC" ]; then
+    log_msg "WARNING: Cannot read available congestion control algorithms"
+    exit 0
+fi
+
+log_msg "Available congestion control: $AVAILABLE_CC"
+
+# Detect and set best available algorithm
+SELECTED_CC=""
+
+if echo "$AVAILABLE_CC" | grep -qw "bbr2"; then
+    SELECTED_CC="bbr2"
+    log_msg "Using BBR2 (best for MPTCP)"
+elif echo "$AVAILABLE_CC" | grep -qw "bbr"; then
+    SELECTED_CC="bbr"
+    log_msg "Using BBR (BBR2 not available)"
+elif echo "$AVAILABLE_CC" | grep -qw "cubic"; then
+    SELECTED_CC="cubic"
+    log_msg "Using CUBIC (BBR not available)"
+else
+    log_msg "WARNING: No optimal congestion control found, using kernel default"
+    exit 0
+fi
+
+# Apply the selected congestion control
+if [ -n "$SELECTED_CC" ]; then
+    # Set immediately
+    if echo "$SELECTED_CC" > /proc/sys/net/ipv4/tcp_congestion_control 2>/dev/null; then
+        log_msg "Applied congestion control: $SELECTED_CC"
+    else
+        log_msg "ERROR: Failed to set congestion control to $SELECTED_CC"
+    fi
+
+    # Update sysctl.d config for persistence
+    SYSCTL_FILE="/etc/sysctl.d/99-omr-mptcp-5g-optimization.conf"
+    if [ -f "$SYSCTL_FILE" ]; then
+        # Use sed to update the congestion control setting
+        sed -i "s/^net.ipv4.tcp_congestion_control = .*/net.ipv4.tcp_congestion_control = $SELECTED_CC/" "$SYSCTL_FILE"
+        log_msg "Updated $SYSCTL_FILE with $SELECTED_CC"
+    fi
+fi
+
+exit 0

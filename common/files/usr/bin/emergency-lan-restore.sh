@@ -88,9 +88,17 @@ if [ -z "$emergency_port" ]; then
 			set network.lan.ip6assign='60'
 		EOF
         
-        uci commit network
-        /etc/init.d/network restart
-        
+        if ! uci commit network; then
+            log_msg "ERROR: Failed to commit network configuration"
+            return 1
+        fi
+
+        if ! /etc/init.d/network restart; then
+            log_msg "ERROR: Network restart failed - system may be in inconsistent state"
+            log_msg "Try manual recovery: /etc/init.d/network restart"
+            return 1
+        fi
+
         log_msg "✓ ALL ports assigned to LAN"
         log_msg "✓ LAN IP: 192.168.2.1"
         log_msg "✓ Connect to any port and access http://192.168.2.1"
@@ -115,8 +123,11 @@ if [ -n "$emergency_port" ]; then
 		set network.lan.ip6assign='60'
 	EOF
     
-    uci commit network
-    
+    if ! uci commit network; then
+        log_msg "ERROR: Failed to commit network configuration"
+        exit 1
+    fi
+
     # Ensure DHCP is enabled
     uci -q batch <<-EOF
 		set dhcp.lan=dhcp
@@ -129,8 +140,15 @@ if [ -n "$emergency_port" ]; then
 	EOF
     
     # Restart network services
-    /etc/init.d/network restart
-    /etc/init.d/dnsmasq restart
+    if ! /etc/init.d/network restart; then
+        log_msg "ERROR: Network restart failed"
+        log_msg "Try manual: /etc/init.d/network restart"
+        exit 1
+    fi
+
+    if ! /etc/init.d/dnsmasq restart; then
+        log_msg "WARNING: DHCP restart failed - LAN may work but no DHCP"
+    fi
     
     log_msg "═══════════════════════════════════════════════════"
     log_msg "✓ EMERGENCY RESTORE COMPLETE"
