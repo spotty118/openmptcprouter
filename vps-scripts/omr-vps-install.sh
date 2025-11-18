@@ -235,7 +235,7 @@ net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
 net.ipv4.tcp_max_tw_buckets = 2000000
 # TCP keepalive - AGGRESSIVE for WAN bonding failover
-# Must match client settings for consistent failover detection
+# Must match client settings (20/3/10=50s) for consistent failover detection
 net.ipv4.tcp_keepalive_time = 20
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10

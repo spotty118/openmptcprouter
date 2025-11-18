@@ -235,17 +235,42 @@ emergency_recovery() {
         return 1
     fi
 
-    # Wait for network to come up
-    sleep 3
+    # Wait for network to come up and verify LAN IP
+    local verify_attempts=0
+    local max_verify_attempts=10
+    local lan_up=0
+
+    while [ $verify_attempts -lt $max_verify_attempts ]; do
+        sleep 1
+        verify_attempts=$((verify_attempts + 1))
+
+        # Check if br-lan has the expected IP
+        local current_ip
+        current_ip=$(ip -4 addr show dev br-lan 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+
+        if [ "$current_ip" = "192.168.2.1" ]; then
+            lan_up=1
+            break
+        fi
+    done
+
+    if [ $lan_up -eq 0 ]; then
+        log_msg "CRITICAL: LAN failed to come up with expected IP after ${max_verify_attempts}s"
+        local actual_ip
+        actual_ip=$(ip -4 addr show dev br-lan 2>/dev/null | grep "inet " | awk '{print $2}' | cut -d/ -f1)
+        log_msg "Expected: 192.168.2.1, Actual: ${actual_ip:-none}"
+        log_msg "Manual intervention required"
+        return 1
+    fi
 
     log_msg "═══════════════════════════════════════════════════"
     log_msg "✓ EMERGENCY RECOVERY COMPLETE"
     log_msg "  LAN restored on port: $emergency_port"
-    log_msg "  LAN IP: 192.168.2.1 (static, never DHCP)"
+    log_msg "  LAN IP: 192.168.2.1 (verified, static)"
     log_msg "  Access router at: http://192.168.2.1"
     log_msg "  Please reconfigure your network via web UI"
     log_msg "═══════════════════════════════════════════════════"
-    
+
     return 0
 }
 
