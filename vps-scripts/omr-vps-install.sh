@@ -228,9 +228,11 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
 net.ipv4.tcp_max_tw_buckets = 2000000
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+# TCP keepalive - aligned with router for symmetric failover
+# Router uses 20/3/10=50s, VPS uses same for consistent detection
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
 
 # Optimize TCP window size for high-latency 5G links
 net.ipv4.tcp_window_scaling = 1

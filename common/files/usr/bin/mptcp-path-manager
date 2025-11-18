@@ -110,11 +110,38 @@ count_recent_failures() {
     fi
 }
 
+# Check if penalty already applied
+is_penalty_applied() {
+    local iface=$1
+    local penalty_type=$2
+    [ -f "$STATE_DIR/${iface}.penalty_${penalty_type}" ]
+}
+
+# Mark penalty as applied
+mark_penalty_applied() {
+    local iface=$1
+    local penalty_type=$2
+    touch "$STATE_DIR/${iface}.penalty_${penalty_type}"
+}
+
+# Mark penalty as removed
+mark_penalty_removed() {
+    local iface=$1
+    local penalty_type=$2
+    rm -f "$STATE_DIR/${iface}.penalty_${penalty_type}"
+}
+
 # Apply metric penalty to interface
 apply_metric_penalty() {
     local iface=$1
     local penalty=$2
     local reason=$3
+    local penalty_type="${4:-generic}"
+
+    # Skip if penalty already applied (prevents repeated UCI writes)
+    if is_penalty_applied "$iface" "$penalty_type"; then
+        return 0
+    fi
 
     local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
     if [ -z "$current_metric" ]; then
@@ -130,6 +157,7 @@ apply_metric_penalty() {
             local new_metric=$((current_metric + penalty))
             uci set network.${uci_section}.metric="$new_metric"
             uci commit network
+            mark_penalty_applied "$iface" "$penalty_type"
             log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
         fi
@@ -137,6 +165,7 @@ apply_metric_penalty() {
         local new_metric=$((current_metric + penalty))
         uci set network.${iface}.metric="$new_metric"
         uci commit network
+        mark_penalty_applied "$iface" "$penalty_type"
         log_warn "Applied $penalty metric penalty to $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0
     fi
@@ -150,6 +179,12 @@ remove_metric_penalty() {
     local iface=$1
     local penalty=$2
     local reason=$3
+    local penalty_type="${4:-generic}"
+
+    # Skip if penalty not applied
+    if ! is_penalty_applied "$iface" "$penalty_type"; then
+        return 0
+    fi
 
     local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
     if [ -z "$current_metric" ]; then
@@ -165,6 +200,7 @@ remove_metric_penalty() {
             [ "$new_metric" -lt 1 ] && new_metric=1
             uci set network.${uci_section}.metric="$new_metric"
             uci commit network
+            mark_penalty_removed "$iface" "$penalty_type"
             log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
         fi
@@ -173,6 +209,7 @@ remove_metric_penalty() {
         [ "$new_metric" -lt 1 ] && new_metric=1
         uci set network.${iface}.metric="$new_metric"
         uci commit network
+        mark_penalty_removed "$iface" "$penalty_type"
         log_info "Removed $penalty metric penalty from $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0
     fi
@@ -241,7 +278,7 @@ check_path_blacklisting() {
         if ! is_blacklisted "$iface"; then
             log_warn "BLACKLISTING $iface ($recent_failures failures in ${BLACKLIST_WINDOW}s window)"
             echo "$now" > "$STATE_DIR/${iface}.blacklist"
-            apply_metric_penalty "$iface" 1000 "blacklisted due to repeated failures"
+            apply_metric_penalty "$iface" 1000 "blacklisted due to repeated failures" "blacklist"
         fi
     else
         # Check if blacklist should be lifted
@@ -252,7 +289,7 @@ check_path_blacklisting() {
             if [ "$blacklist_age" -ge "$BLACKLIST_DURATION" ]; then
                 log_info "UNBLACKLISTING $iface (served ${blacklist_age}s penalty, recent_failures: $recent_failures)"
                 rm -f "$STATE_DIR/${iface}.blacklist"
-                remove_metric_penalty "$iface" 1000 "blacklist expired"
+                remove_metric_penalty "$iface" 1000 "blacklist expired" "blacklist"
             fi
         fi
     fi
@@ -282,7 +319,7 @@ check_path_degradation() {
             local loss_pct=$((loss_rate / 100))
             log_warn "Path $iface DEGRADED (loss rate: ${loss_pct}.$(printf "%02d" $((loss_rate % 100)))%)"
             touch "$STATE_DIR/${iface}.degraded"
-            apply_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "degraded link quality"
+            apply_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "degraded link quality" "degraded"
         fi
     else
         # Path quality is good - restore if was degraded
@@ -290,7 +327,7 @@ check_path_degradation() {
             local loss_pct=$((loss_rate / 100))
             log_info "Path $iface RECOVERED from degradation (loss rate: ${loss_pct}.$(printf "%02d" $((loss_rate % 100)))%)"
             rm -f "$STATE_DIR/${iface}.degraded"
-            remove_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "link quality recovered"
+            remove_metric_penalty "$iface" "$DEGRADED_METRIC_PENALTY" "link quality recovered" "degraded"
         fi
     fi
 }
