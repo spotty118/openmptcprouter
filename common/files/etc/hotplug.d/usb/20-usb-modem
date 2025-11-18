@@ -47,12 +47,25 @@ case "$DEVTYPE" in
                 ;;
         esac
         
-        # Wait a bit for device to fully enumerate
-        sleep 5
-        
-        # Run USB modem auto-config
+        # Wait for device enumeration with timeout (max 10 seconds)
+        logger -t usb-modem-hotplug "Waiting for device enumeration..."
+        for i in 1 2 3 4 5 6 7 8 9 10; do
+            # Check if any modem-related device nodes appeared
+            if [ -c /dev/cdc-wdm0 ] || [ -e /sys/class/net/usb0 ] || [ -e /sys/class/net/wwan0 ]; then
+                logger -t usb-modem-hotplug "Device enumerated after ${i}s"
+                break
+            fi
+            sleep 1
+        done
+
+        # Run USB modem auto-config with timeout to prevent hangs
         if [ -x /usr/bin/usb-modem-autoconfig.sh ]; then
-            /usr/bin/usb-modem-autoconfig.sh &
+            # Use timeout if available, otherwise run normally
+            if command -v timeout >/dev/null 2>&1; then
+                timeout 60 /usr/bin/usb-modem-autoconfig.sh &
+            else
+                /usr/bin/usb-modem-autoconfig.sh &
+            fi
         fi
         ;;
 esac

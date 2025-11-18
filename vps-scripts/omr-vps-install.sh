@@ -193,12 +193,13 @@ net.ipv4.ip_forward = 1
 net.ipv6.conf.all.forwarding = 1
 
 # MPTCP Configuration - Enhanced for Multi-WAN Bonding
+# NOTE: Modern kernels (6.1+) use 'net.mptcp.*' (no 'mptcp_' prefix)
+# Legacy kernels (5.4) use 'net.mptcp.mptcp_*'
+# Both formats included for compatibility
+net.mptcp.enabled = 1
 net.mptcp.mptcp_enabled = 1
+net.mptcp.checksum = 0
 net.mptcp.mptcp_checksum = 0
-net.mptcp.mptcp_debug = 0
-net.mptcp.mptcp_syn_retries = 3
-net.mptcp.mptcp_path_manager = fullmesh
-net.mptcp.mptcp_scheduler = default
 
 # BBR2 Congestion Control
 net.ipv4.tcp_congestion_control = bbr2
@@ -274,9 +275,11 @@ net.ipv6.neigh.default.gc_thresh1 = 2048
 net.ipv6.neigh.default.gc_thresh2 = 4096
 net.ipv6.neigh.default.gc_thresh3 = 8192
 
-# Security
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
+# Security - Use loose mode (2) for multi-WAN bonding
+# Strict mode (1) would drop packets from clients with asymmetric routing
+# Loose mode (2) allows reverse path via any interface (RFC3704)
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
@@ -301,7 +304,21 @@ fs.file-max = 2097152
 SYSCTL
 
 # Apply sysctl settings
-sysctl -p /etc/sysctl.d/99-openmptcprouter.conf > /dev/null
+sysctl -p /etc/sysctl.d/99-openmptcprouter.conf > /dev/null 2>&1 || true
+
+# Verify and apply TCP congestion control with fallback
+echo -e "${YELLOW}Configuring TCP congestion control...${NC}"
+if sysctl -w net.ipv4.tcp_congestion_control=bbr2 >/dev/null 2>&1; then
+    echo -e "${GREEN}✓ BBR2 congestion control enabled${NC}"
+elif sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1; then
+    echo -e "${YELLOW}⚠ BBR2 not available, using BBR${NC}"
+    sed -i 's/tcp_congestion_control = bbr2/tcp_congestion_control = bbr/' /etc/sysctl.d/99-openmptcprouter.conf
+else
+    echo -e "${YELLOW}⚠ BBR not available, using cubic (default)${NC}"
+    sed -i 's/tcp_congestion_control = bbr2/tcp_congestion_control = cubic/' /etc/sysctl.d/99-openmptcprouter.conf
+    sysctl -w net.ipv4.tcp_congestion_control=cubic >/dev/null 2>&1
+fi
+echo "Active congestion control: $(sysctl -n net.ipv4.tcp_congestion_control)"
 
 echo -e "${GREEN}Step 4/6: Configuring firewall rules...${NC}"
 

@@ -90,25 +90,64 @@ auto_configure_wifi() {
     fi
 }
 
+# Check MPTCP subflow health (helps users identify bonding issues)
+check_mptcp_subflows() {
+    # Only check if ip mptcp command is available
+    if ! command -v ip >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # Check if ip mptcp is supported
+    if ! ip mptcp endpoint show >/dev/null 2>&1; then
+        return 0  # MPTCP netlink not available
+    fi
+
+    local endpoint_count
+    endpoint_count=$(ip mptcp endpoint show 2>/dev/null | grep -c "^" || echo "0")
+
+    # Get WAN count with MPTCP enabled
+    local mptcp_wan_count=0
+    for wan in $(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1); do
+        local multipath
+        multipath=$(uci -q get "network.$wan.multipath")
+        if [ "$multipath" = "on" ]; then
+            mptcp_wan_count=$((mptcp_wan_count + 1))
+        fi
+    done
+
+    # Warn if MPTCP WANs configured but no endpoints registered
+    if [ "$mptcp_wan_count" -gt 0 ] && [ "$endpoint_count" -eq 0 ]; then
+        log_msg "WARNING: $mptcp_wan_count WAN(s) have MPTCP enabled but no endpoints registered"
+        log_msg "Bonding may not be active. Check VPS connection and tunnel status."
+    fi
+}
+
 # Main monitoring loop
 main() {
     log_msg "Network health monitor starting"
     check_running
-    
+
     # Wait for system to stabilize
     sleep 15
-    
+
     # One-time first boot WiFi setup
     auto_configure_wifi
-    
+
     log_msg "Monitoring DHCP and system health"
-    
+
     # Main loop - just keep services running
+    local check_count=0
     while true; do
         sleep $CHECK_INTERVAL
-        
+
         # Ensure DHCP is running
         check_dhcp_server
+
+        # Check MPTCP every 5 iterations (5 minutes)
+        check_count=$((check_count + 1))
+        if [ $((check_count % 5)) -eq 0 ]; then
+            check_mptcp_subflows
+        fi
     done
 }
 

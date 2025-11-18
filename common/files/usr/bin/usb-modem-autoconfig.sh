@@ -152,22 +152,53 @@ get_modem_info() {
     case "$proto" in
         qmi)
             if command -v uqmi >/dev/null 2>&1 && [ -n "$dev" ] && [ -c "$dev" ]; then
-                # Get signal strength
-                local signal
-                signal=$(uqmi -d "$dev" --get-signal-info 2>/dev/null | grep rssi | cut -d: -f2 | tr -d ' ,')
-                [ -n "$signal" ] && info="$info, Signal: ${signal}dBm"
+                # Get signal strength with timeout to prevent hangs
+                local signal=""
+                if command -v timeout >/dev/null 2>&1; then
+                    signal=$(timeout 5 uqmi -d "$dev" --get-signal-info 2>/dev/null | grep rssi | cut -d: -f2 | tr -d ' ,')
+                else
+                    signal=$(uqmi -d "$dev" --get-signal-info 2>/dev/null | grep rssi | cut -d: -f2 | tr -d ' ,')
+                fi
+
+                if [ -n "$signal" ] && [ "$signal" != "0" ]; then
+                    info="$info, Signal: ${signal}dBm"
+                else
+                    info="$info, Signal: N/A"
+                fi
 
                 # Get network registration
-                local network
-                network=$(uqmi -d "$dev" --get-serving-system 2>/dev/null | grep description | cut -d\" -f4)
-                [ -n "$network" ] && info="$info, Network: $network"
+                local network=""
+                if command -v timeout >/dev/null 2>&1; then
+                    network=$(timeout 5 uqmi -d "$dev" --get-serving-system 2>/dev/null | grep description | cut -d\" -f4)
+                else
+                    network=$(uqmi -d "$dev" --get-serving-system 2>/dev/null | grep description | cut -d\" -f4)
+                fi
+
+                if [ -n "$network" ]; then
+                    info="$info, Network: $network"
+                else
+                    info="$info, Network: Searching"
+                fi
+            else
+                info="$info, Signal: N/A (no uqmi)"
             fi
             ;;
         mbim)
             if command -v umbim >/dev/null 2>&1 && [ -n "$dev" ] && [ -c "$dev" ]; then
-                local signal
-                signal=$(umbim -d "$dev" -n signal 2>/dev/null | grep rssi | cut -d: -f2)
-                [ -n "$signal" ] && info="$info, Signal: ${signal}dBm"
+                local signal=""
+                if command -v timeout >/dev/null 2>&1; then
+                    signal=$(timeout 5 umbim -d "$dev" -n signal 2>/dev/null | grep rssi | cut -d: -f2)
+                else
+                    signal=$(umbim -d "$dev" -n signal 2>/dev/null | grep rssi | cut -d: -f2)
+                fi
+
+                if [ -n "$signal" ] && [ "$signal" != "0" ]; then
+                    info="$info, Signal: ${signal}dBm"
+                else
+                    info="$info, Signal: N/A"
+                fi
+            else
+                info="$info, Signal: N/A (no umbim)"
             fi
             ;;
     esac
@@ -220,6 +251,8 @@ configure_modem_as_wan() {
             [ -n "$username" ] && uci -q set "network.$wan_name.username=$username"
             [ -n "$password" ] && uci -q set "network.$wan_name.password=$password"
             [ -n "$auth_type" ] && uci -q set "network.$wan_name.auth=$auth_type"
+            # Optimize MTU for cellular (account for MPTCP overhead + carrier encapsulation)
+            uci -q set "network.$wan_name.mtu=1400"
             ;;
         mbim)
             uci -q batch <<-EOF
@@ -236,6 +269,8 @@ configure_modem_as_wan() {
             [ -n "$username" ] && uci -q set "network.$wan_name.username=$username"
             [ -n "$password" ] && uci -q set "network.$wan_name.password=$password"
             [ -n "$auth_type" ] && uci -q set "network.$wan_name.auth=$auth_type"
+            # Optimize MTU for cellular (account for MPTCP overhead + carrier encapsulation)
+            uci -q set "network.$wan_name.mtu=1400"
             ;;
         eth)
             # Generic USB ethernet (could be RNDIS, NCM, etc.)
@@ -247,10 +282,16 @@ configure_modem_as_wan() {
 				set network.$wan_name.metric='$((wan_num * 10))'
 				set network.$wan_name.multipath='on'
 			EOF
+            # USB ethernet: standard MTU minus MPTCP overhead
+            uci -q set "network.$wan_name.mtu=1460"
             ;;
     esac
-    
-    uci commit network
+
+    # Commit network configuration with error checking
+    if ! uci commit network; then
+        log_msg "ERROR: Failed to commit network configuration for $wan_name"
+        return 1
+    fi
     
     # Save modem info to a status file
     local status_dir="/var/run/modem-status"

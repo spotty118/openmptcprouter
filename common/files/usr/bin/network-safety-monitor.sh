@@ -214,11 +214,17 @@ emergency_recovery() {
 		set network.lan.ip6assign='60'
 	EOF
     
-    uci commit network
-    
+    if ! uci commit network; then
+        log_msg "ERROR: Failed to commit network configuration"
+        return 1
+    fi
+
     # Restart network
-    /etc/init.d/network restart
-    
+    if ! /etc/init.d/network restart; then
+        log_msg "ERROR: Failed to restart network"
+        return 1
+    fi
+
     log_msg "═══════════════════════════════════════════════════"
     log_msg "✓ EMERGENCY RECOVERY COMPLETE"
     log_msg "  LAN restored on port: $emergency_port"
@@ -241,10 +247,17 @@ fix_lan_protocol() {
         uci set network.lan.proto='static'
         uci set network.lan.ipaddr='192.168.2.1'
         uci set network.lan.netmask='255.255.255.0'
-        uci commit network
-        
-        /etc/init.d/network reload
-        
+
+        if ! uci commit network; then
+            log_msg "ERROR: Failed to commit LAN protocol fix"
+            return 1
+        fi
+
+        if ! /etc/init.d/network reload; then
+            log_msg "ERROR: Failed to reload network"
+            return 1
+        fi
+
         log_msg "✓ LAN fixed to static IP"
     fi
 }
@@ -266,10 +279,17 @@ ensure_dhcp_on_lan() {
 			set dhcp.lan.dhcpv6='server'
 			set dhcp.lan.ra='server'
 		EOF
-        
-        uci commit dhcp
-        /etc/init.d/dnsmasq restart
-        
+
+        if ! uci commit dhcp; then
+            log_msg "ERROR: Failed to commit DHCP configuration"
+            return 1
+        fi
+
+        if ! /etc/init.d/dnsmasq restart; then
+            log_msg "ERROR: Failed to restart dnsmasq"
+            return 1
+        fi
+
         log_msg "DHCP enabled on LAN"
     fi
 }
