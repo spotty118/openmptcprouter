@@ -301,8 +301,11 @@ configure_modem_as_wan() {
 			EOF
             ;;
     esac
-    
-    uci commit network
+
+    if ! uci commit network; then
+        log_msg "ERROR: Failed to commit network config for $wan_name"
+        return 1
+    fi
     
     # Save modem info to a status file
     local status_dir="/var/run/modem-status"
@@ -449,7 +452,9 @@ cleanup_disconnected_modems() {
         esac
     done
 
-    uci commit network
+    if ! uci commit network; then
+        log_msg "WARNING: Failed to commit cleanup changes"
+    fi
 }
 
 # Main function

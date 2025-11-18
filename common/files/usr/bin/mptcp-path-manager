@@ -226,7 +226,10 @@ apply_metric_penalty() {
     [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
 
     uci set network.${uci_section}.metric="$new_metric"
-    uci commit network
+    if ! uci commit network; then
+        log_warn "Failed to commit metric penalty for $iface"
+        return 1
+    fi
     mark_penalty_applied "$iface" "$penalty_type"
     log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
     return 0
@@ -272,7 +275,10 @@ remove_metric_penalty() {
     [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
 
     uci set network.${uci_section}.metric="$new_metric"
-    uci commit network
+    if ! uci commit network; then
+        log_warn "Failed to commit metric penalty removal for $iface"
+        return 1
+    fi
     mark_penalty_removed "$iface" "$penalty_type"
     log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
     return 0
