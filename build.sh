@@ -135,20 +135,25 @@ if [ -n "$MISSING_DEPS" ]; then
 fi
 echo "✓ All required dependencies found"
 
-# Validate available disk space (require at least 30GB free)
+# Validate available disk space (require at least 20GB free, 30GB recommended for full builds)
 echo "Checking available disk space..."
 AVAILABLE_KB=$(df . | tail -1 | awk '{print $4}')
-REQUIRED_KB=$((30 * 1024 * 1024))  # 30GB in KB
+REQUIRED_KB=$((20 * 1024 * 1024))  # 20GB minimum in KB
+RECOMMENDED_KB=$((30 * 1024 * 1024))  # 30GB recommended in KB
 if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
 	AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
 	echo "ERROR: Insufficient disk space"
 	echo "  Available: ${AVAILABLE_GB}GB"
-	echo "  Required:  30GB minimum"
+	echo "  Required:  20GB minimum (30GB recommended for full builds)"
 	echo "Please free up disk space before building."
 	exit 1
 fi
 AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
-echo "✓ Sufficient disk space available: ${AVAILABLE_GB}GB"
+if [ "$AVAILABLE_KB" -lt "$RECOMMENDED_KB" ]; then
+	echo "⚠ Disk space available: ${AVAILABLE_GB}GB (30GB recommended for full builds)"
+else
+	echo "✓ Sufficient disk space available: ${AVAILABLE_GB}GB"
+fi
 
 if [ "$OMR_KERNEL" = "5.4" ] && [ "$OMR_TARGET" = "rutx12" ]; then
 	OMR_TARGET_CONFIG="config-rutx"
