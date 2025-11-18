@@ -316,9 +316,9 @@ net.mptcp.mptcp_syn_retries = 3
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2 Congestion Control
+# BBR2 Congestion Control (fq qdisc required for optimal BBR performance)
 net.ipv4.tcp_congestion_control = bbr2
-net.core.default_qdisc = fq_codel
+net.core.default_qdisc = fq
 
 # Network Performance Tuning - Enhanced for Multi-WAN
 net.core.rmem_max = 268435456
@@ -336,9 +336,11 @@ net.ipv4.tcp_max_syn_backlog = 8192
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+# TCP keepalive - aggressive for fast failover detection (matches client config)
+# Total detection time: 20 + (3 * 10) = 50 seconds
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
 
 # Optimize TCP window size
 net.ipv4.tcp_window_scaling = 1
@@ -372,9 +374,11 @@ net.ipv4.tcp_timestamps = 1
 # Increase connection tracking table size for multi-WAN
 net.nf_conntrack_max = 262144
 
-# Security
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
+# RP filter - Use loose mode (2) for MPTCP multi-WAN bonding
+# Strict mode (1) would drop packets arriving on "wrong" interface
+# MPTCP requires loose mode because packets may arrive on different interface than outgoing
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
