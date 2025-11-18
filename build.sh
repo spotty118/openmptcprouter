@@ -135,15 +135,15 @@ if [ -n "$MISSING_DEPS" ]; then
 fi
 echo "✓ All required dependencies found"
 
-# Validate available disk space (require at least 30GB free)
+# Validate available disk space (require at least 25GB free)
 echo "Checking available disk space..."
 AVAILABLE_KB=$(df . | tail -1 | awk '{print $4}')
-REQUIRED_KB=$((30 * 1024 * 1024))  # 30GB in KB
+REQUIRED_KB=$((25 * 1024 * 1024))  # 25GB in KB
 if [ "$AVAILABLE_KB" -lt "$REQUIRED_KB" ]; then
 	AVAILABLE_GB=$((AVAILABLE_KB / 1024 / 1024))
 	echo "ERROR: Insufficient disk space"
 	echo "  Available: ${AVAILABLE_GB}GB"
-	echo "  Required:  30GB minimum"
+	echo "  Required:  25GB minimum"
 	echo "Please free up disk space before building."
 	exit 1
 fi
