@@ -19,7 +19,8 @@ CHECK_INTERVAL=30  # Check every 30 seconds
 EMERGENCY_PORT_FILE="/var/run/emergency-port"
 
 # Recovery retry limiting
-readonly MAX_RECOVERY_ATTEMPTS=3
+# Note: Using regular variable instead of readonly for POSIX sh compatibility
+MAX_RECOVERY_ATTEMPTS=3
 RECOVERY_FAILURES=0
 LAST_RECOVERY_ATTEMPT=0
 
