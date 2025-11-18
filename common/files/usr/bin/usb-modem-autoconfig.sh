@@ -21,7 +21,9 @@ if [ -f "/etc/usa-carrier-apns.conf" ]; then
     file_owner=$(stat -c "%u" "$apn_file" 2>/dev/null)
     file_perms=$(stat -c "%a" "$apn_file" 2>/dev/null)
 
-    if [ "$file_owner" = "0" ] && [ "${file_perms#?}" != "${file_perms#?[2367]}" ]; then
+    # Check if world-writable (last digit contains 2, 3, 6, or 7)
+    local world_perms="${file_perms#??}"
+    if [ "$file_owner" = "0" ] && echo "$world_perms" | grep -qE '[2367]'; then
         # File is owned by root but world-writable - skip for security
         logger -t "$LOG_TAG" "WARNING: Skipping $apn_file - insecure permissions"
     elif [ "$file_owner" = "0" ]; then
@@ -338,12 +340,24 @@ configure_modem_as_wan() {
     log_msg "Bringing up interface $wan_name..."
 
     # Run ifup with timeout (30 seconds for modem initialization)
+    # FIX: Capture exit code properly - pipe loses exit status
     local ifup_timeout=30
     local ifup_success=0
+    local ifup_output_file="/tmp/ifup_output_$$.txt"
 
-    if timeout $ifup_timeout ifup "$wan_name" 2>&1 | while read line; do
-        log_msg "ifup: $line"
-    done; then
+    # Run timeout and capture exit code directly (not through pipe)
+    timeout $ifup_timeout ifup "$wan_name" > "$ifup_output_file" 2>&1
+    local exit_code=$?
+
+    # Log the output
+    if [ -f "$ifup_output_file" ]; then
+        while read line; do
+            log_msg "ifup: $line"
+        done < "$ifup_output_file"
+        rm -f "$ifup_output_file"
+    fi
+
+    if [ $exit_code -eq 0 ]; then
         # Wait a bit for interface to fully initialize
         sleep 3
 
@@ -355,18 +369,21 @@ configure_modem_as_wan() {
             log_msg "WARNING: Interface $wan_name ifup succeeded but interface not up"
             log_msg "Check 'ifstatus $wan_name' for details"
         fi
-    else
-        local exit_code=$?
-        if [ $exit_code -eq 124 ]; then
-            log_msg "ERROR: Interface $wan_name bring-up timed out after ${ifup_timeout}s"
-        else
-            log_msg "ERROR: Interface $wan_name bring-up failed with code $exit_code"
-        fi
+    elif [ $exit_code -eq 124 ]; then
+        log_msg "ERROR: Interface $wan_name bring-up timed out after ${ifup_timeout}s"
         log_msg "Modem may not be properly initialized or configured"
         # Update status file to reflect failure
         if [ -f "$status_dir/$wan_name" ]; then
             echo "STATUS=failed" >> "$status_dir/$wan_name"
-            echo "ERROR=ifup failed or timed out" >> "$status_dir/$wan_name"
+            echo "ERROR=ifup timed out" >> "$status_dir/$wan_name"
+        fi
+    else
+        log_msg "ERROR: Interface $wan_name bring-up failed with code $exit_code"
+        log_msg "Modem may not be properly initialized or configured"
+        # Update status file to reflect failure
+        if [ -f "$status_dir/$wan_name" ]; then
+            echo "STATUS=failed" >> "$status_dir/$wan_name"
+            echo "ERROR=ifup failed with code $exit_code" >> "$status_dir/$wan_name"
         fi
     fi
 }

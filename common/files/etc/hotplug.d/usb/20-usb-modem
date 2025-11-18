@@ -80,11 +80,21 @@ case "$DEVTYPE" in
         esac
 
         # Wait for device to fully enumerate with adaptive timeout
-        # Poll for USB device readiness instead of fixed delay
-        for i in $(seq 1 10); do
-            [ -e /sys/bus/usb/devices ] && break
+        # FIX: Wait for actual network interfaces, not just USB device path
+        # This prevents autoconfig from running before modem interfaces appear
+        local net_ready=0
+        for i in $(seq 1 20); do
+            # Check for modem network interfaces (wwan*, usb*, cdc-wdm*)
+            if ls /sys/class/net/wwan* /sys/class/net/usb* /dev/cdc-wdm* 2>/dev/null | grep -q .; then
+                net_ready=1
+                break
+            fi
             sleep 0.5
         done
+
+        if [ $net_ready -eq 0 ]; then
+            logger -t usb-modem-hotplug "WARNING: Modem network interfaces not ready after 10s"
+        fi
 
         # Run USB modem auto-config with lock to prevent race conditions
         # Multiple rapid plug/unplug events could spawn duplicate configs
