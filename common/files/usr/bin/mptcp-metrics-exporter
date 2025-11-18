@@ -5,6 +5,8 @@
 
 EXPORT_DIR="/var/run/mptcp-metrics"
 EXPORT_INTERVAL=10  # Update every 10 seconds
+LOCK_FILE="/var/run/mptcp-metrics-exporter.lock"
+PID_FILE="/var/run/mptcp-metrics-exporter.pid"
 
 mkdir -p "$EXPORT_DIR"
 
@@ -23,6 +25,47 @@ trap cleanup_and_exit INT TERM
 log_info() {
     logger -t mptcp-metrics -p daemon.info "$@"
 }
+
+log_warn() {
+    logger -t mptcp-metrics -p daemon.warning "$@"
+}
+
+# Single-instance enforcement using atomic mkdir
+acquire_lock() {
+    if mkdir "$LOCK_FILE" 2>/dev/null; then
+        echo $$ > "$PID_FILE"
+        return 0
+    fi
+
+    # Check if existing process is still running
+    if [ -f "$PID_FILE" ]; then
+        local old_pid=$(cat "$PID_FILE" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            return 1  # Another instance is running
+        fi
+        # Stale lock - clean up and retry
+        rm -rf "$LOCK_FILE"
+        if mkdir "$LOCK_FILE" 2>/dev/null; then
+            echo $$ > "$PID_FILE"
+            return 0
+        fi
+    fi
+    return 1
+}
+
+release_lock() {
+    rm -f "$PID_FILE"
+    rm -rf "$LOCK_FILE"
+}
+
+# Signal handlers for clean shutdown
+cleanup_and_exit() {
+    log_info "MPTCP Metrics Exporter shutting down (PID: $$)"
+    release_lock
+    exit 0
+}
+
+trap cleanup_and_exit INT TERM HUP QUIT
 
 # Validate interface name to prevent command injection
 validate_interface_name() {
@@ -247,20 +290,32 @@ export_summary() {
     } > "$summary_file"
 }
 
-# Main loop
-log_info "MPTCP Metrics Exporter starting (export_interval: ${EXPORT_INTERVAL}s)"
+# Main entry point
+main() {
+    # Acquire lock - exit if another instance is running
+    if ! acquire_lock; then
+        echo "Another instance of MPTCP Metrics Exporter is already running" >&2
+        exit 1
+    fi
 
-while [ "$RUNNING" -eq 1 ]; do
-    for iface_path in /sys/class/net/*; do
-        [ -e "$iface_path" ] || continue
-        iface=$(basename "$iface_path")
-        if is_wan_interface "$iface"; then
-            export_interface_metrics "$iface"
-        fi
+    log_info "MPTCP Metrics Exporter starting (PID: $$, export_interval: ${EXPORT_INTERVAL}s)"
+
+    # Main loop - use RUNNING flag for graceful shutdown
+    while [ "$RUNNING" -eq 1 ]; do
+        for iface_path in /sys/class/net/*; do
+            [ -e "$iface_path" ] || continue
+            iface=$(basename "$iface_path")
+            if is_wan_interface "$iface"; then
+                export_interface_metrics "$iface"
+            fi
+        done
+
+        export_summary
+        sleep "$EXPORT_INTERVAL"
     done
 
-    export_summary
-    sleep "$EXPORT_INTERVAL"
-done
+    log_info "MPTCP Metrics Exporter stopped"
+}
 
-log_info "MPTCP Metrics Exporter stopped"
+# Run main
+main

@@ -118,11 +118,29 @@ net.mptcp.mptcp_enabled = 1
 net.ipv4.tcp_congestion_control = bbr
 # Use FQ qdisc for BBR (optimal pairing - fq_codel adds unnecessary overhead)
 net.core.default_qdisc = fq
-net.core.rmem_max = 134217728
-net.core.wmem_max = 134217728
-# TCP buffer max should match core max for symmetric behavior
-net.ipv4.tcp_rmem = 4096 87380 134217728
-net.ipv4.tcp_wmem = 4096 65536 134217728
+
+# CRITICAL: Loose RP filter required for MPTCP multi-WAN asymmetric routing
+# Strict mode (1) would DROP valid packets when reply goes via different WAN
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.rp_filter = 2
+
+# Connection tracking - must match VPS/router values for consistency
+net.netfilter.nf_conntrack_max = 524288
+net.nf_conntrack_max = 524288
+
+# TCP keepalive for fast failover (20/3/10 = 50s total)
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
+
+# TCP retries - faster failover detection (default 15 is too slow)
+net.ipv4.tcp_retries2 = 8
+
+# Buffer settings (reduced from 128MB to prevent bufferbloat)
+net.core.rmem_max = 33554432
+net.core.wmem_max = 33554432
+net.ipv4.tcp_rmem = 4096 87380 33554432
+net.ipv4.tcp_wmem = 4096 65536 33554432
 SYSCTL
     
     sysctl -p /etc/sysctl.d/99-omr-autopair.conf > /dev/null 2>&1
