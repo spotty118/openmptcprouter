@@ -316,7 +316,7 @@ net.mptcp.mptcp_syn_retries = 3
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2 Congestion Control
+# BBR2 Congestion Control (fq qdisc required for optimal BBR performance)
 net.ipv4.tcp_congestion_control = bbr2
 # Use FQ qdisc for BBR (matches client config)
 net.core.default_qdisc = fq
