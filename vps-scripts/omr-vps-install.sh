@@ -204,12 +204,11 @@ net.mptcp.mptcp_checksum = 0
 net.mptcp.mptcp_path_manager = fullmesh
 net.mptcp.mptcp_scheduler = default
 
-# BBR2/BBR Congestion Control
-# Try BBR2 first (if available), fall back to BBR, then cubic
-# Kernel uses first available algorithm
-net.ipv4.tcp_congestion_control = bbr2
+# BBR Congestion Control (works with fq qdisc for optimal performance)
+# Note: Change to bbr2 if your kernel supports it (5.10+ with patches)
+# sysctl doesn't support automatic fallback, so we use BBR for wider compatibility
 net.ipv4.tcp_congestion_control = bbr
-net.core.default_qdisc = fq_codel
+net.core.default_qdisc = fq
 
 # Network Performance Tuning - Enhanced for Multi-WAN and 5G
 net.core.rmem_max = 268435456
@@ -230,9 +229,11 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
 net.ipv4.tcp_max_tw_buckets = 2000000
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+# FIX: Match client's aggressive keepalive for fast failover (50s total)
+# Critical for multi-WAN bonding - must detect dead paths quickly
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
 
 # Optimize TCP window size for high-latency 5G links
 net.ipv4.tcp_window_scaling = 1
@@ -267,7 +268,9 @@ net.ipv4.tcp_ecn = 0
 net.ipv4.tcp_frto = 2
 net.ipv4.tcp_early_retrans = 3
 net.ipv4.tcp_mtu_probing = 1
-net.ipv4.tcp_base_mss = 1024
+# FIX: Match client's tcp_base_mss (1400) for better MTU efficiency
+# 1024 is overly conservative; 1400 accounts for tunnel overhead while maximizing throughput
+net.ipv4.tcp_base_mss = 1400
 net.ipv4.tcp_rfc1337 = 1
 net.ipv4.tcp_sack = 1
 net.ipv4.tcp_dsack = 1
