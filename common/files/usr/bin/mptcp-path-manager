@@ -185,6 +185,8 @@ apply_metric_penalty() {
             local new_metric=$((current_metric + penalty))
             uci set network.${uci_section}.metric="$new_metric"
             uci commit network
+            # FIX: Propagate metric change to kernel routing table
+            /etc/init.d/network reload >/dev/null 2>&1 &
             mark_penalty_applied "$iface" "$penalty_type"
             log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
@@ -193,6 +195,8 @@ apply_metric_penalty() {
         local new_metric=$((current_metric + penalty))
         uci set network.${iface}.metric="$new_metric"
         uci commit network
+        # FIX: Propagate metric change to kernel routing table
+        /etc/init.d/network reload >/dev/null 2>&1 &
         mark_penalty_applied "$iface" "$penalty_type"
         log_warn "Applied $penalty metric penalty to $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0
@@ -228,6 +232,8 @@ remove_metric_penalty() {
             [ "$new_metric" -lt 1 ] && new_metric=1
             uci set network.${uci_section}.metric="$new_metric"
             uci commit network
+            # FIX: Propagate metric change to kernel routing table
+            /etc/init.d/network reload >/dev/null 2>&1 &
             mark_penalty_removed "$iface" "$penalty_type"
             log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
             return 0
@@ -237,6 +243,8 @@ remove_metric_penalty() {
         [ "$new_metric" -lt 1 ] && new_metric=1
         uci set network.${iface}.metric="$new_metric"
         uci commit network
+        # FIX: Propagate metric change to kernel routing table
+        /etc/init.d/network reload >/dev/null 2>&1 &
         mark_penalty_removed "$iface" "$penalty_type"
         log_info "Removed $penalty metric penalty from $iface: $reason (metric: $current_metric -> $new_metric)"
         return 0

@@ -148,6 +148,43 @@ fi
 : "${OMR_SHADOWSOCKS_PORT:=65500}"
 : "${OMR_SS_METHOD:=chacha20-ietf-poly1305}"
 
+# Validate IPv4 address with octet range checking
+validate_ipv4() {
+    local ip="$1"
+
+    # Check format
+    if ! echo "$ip" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
+        return 1
+    fi
+
+    # Check each octet is 0-255
+    local IFS='.'
+    set -- $ip
+    for octet in "$@"; do
+        if [ "$octet" -lt 0 ] 2>/dev/null || [ "$octet" -gt 255 ] 2>/dev/null; then
+            return 1
+        fi
+        # Also check it's actually a number
+        case "$octet" in
+            ''|*[!0-9]*) return 1 ;;
+        esac
+    done
+    return 0
+}
+
+# Validate encryption method
+validate_encryption_method() {
+    local method="$1"
+    case "$method" in
+        chacha20-ietf-poly1305|aes-256-gcm|aes-128-gcm|aes-256-cfb|aes-128-cfb|xchacha20-ietf-poly1305)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
 # Parse arguments
 VPS_IP="$1"
 VPS_PASSWORD="$2"
@@ -164,9 +201,9 @@ if [ -z "$VPS_IP" ] && [ "$NON_INTERACTIVE" -eq 0 ]; then
     printf "VPS IP Address: "
     read -r VPS_IP < /dev/tty
 
-    # Validate IP address format
-    if ! echo "$VPS_IP" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-        echo -e "${RED}Error: Invalid IP address format${NC}"
+    # Validate IP address format with octet range checking
+    if ! validate_ipv4 "$VPS_IP"; then
+        echo -e "${RED}Error: Invalid IP address format (each octet must be 0-255)${NC}"
         exit 1
     fi
 
@@ -193,15 +230,22 @@ if [ -z "$VPS_IP" ] || [ -z "$VPS_PASSWORD" ]; then
     exit 1
 fi
 
-# Validate IP format
-if ! echo "$VPS_IP" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}$'; then
-    echo -e "${RED}Error: Invalid IP address format: $VPS_IP${NC}"
+# Validate IP format with octet range checking
+if ! validate_ipv4 "$VPS_IP"; then
+    echo -e "${RED}Error: Invalid IP address format: $VPS_IP (each octet must be 0-255)${NC}"
     exit 1
 fi
 
 # Validate port range
 if ! [ "$VPS_PORT" -ge 1 ] 2>/dev/null || ! [ "$VPS_PORT" -le 65535 ] 2>/dev/null; then
     echo -e "${RED}Error: Invalid port: $VPS_PORT (must be 1-65535)${NC}"
+    exit 1
+fi
+
+# Validate encryption method
+if ! validate_encryption_method "$OMR_SS_METHOD"; then
+    echo -e "${RED}Error: Invalid encryption method: $OMR_SS_METHOD${NC}"
+    echo -e "${YELLOW}Valid methods: chacha20-ietf-poly1305, aes-256-gcm, aes-128-gcm, aes-256-cfb, aes-128-cfb, xchacha20-ietf-poly1305${NC}"
     exit 1
 fi
 
@@ -320,12 +364,24 @@ uci set firewall.omrvpn_wan=forwarding
 uci set firewall.omrvpn_wan.src='lan'
 uci set firewall.omrvpn_wan.dest='omrvpn'
 
-uci set firewall.omrvpn_rule=rule
-uci set firewall.omrvpn_rule.name='Allow-OMR-VPN'
-uci set firewall.omrvpn_rule.src='wan'
-uci set firewall.omrvpn_rule.dest_port="$VPS_PORT"
-uci set firewall.omrvpn_rule.proto='tcp udp'
-uci set firewall.omrvpn_rule.target='ACCEPT'
+# TCP rule with rate limiting
+uci set firewall.omrvpn_rule_tcp=rule
+uci set firewall.omrvpn_rule_tcp.name='Allow-OMR-VPN-TCP'
+uci set firewall.omrvpn_rule_tcp.src='wan'
+uci set firewall.omrvpn_rule_tcp.dest_port="$VPS_PORT"
+uci set firewall.omrvpn_rule_tcp.proto='tcp'
+uci set firewall.omrvpn_rule_tcp.limit='10/minute'
+uci set firewall.omrvpn_rule_tcp.limit_burst='5'
+uci set firewall.omrvpn_rule_tcp.target='ACCEPT'
+
+# UDP rule with separate rate limit (higher for UDP traffic)
+uci set firewall.omrvpn_rule_udp=rule
+uci set firewall.omrvpn_rule_udp.name='Allow-OMR-VPN-UDP'
+uci set firewall.omrvpn_rule_udp.src='wan'
+uci set firewall.omrvpn_rule_udp.dest_port="$VPS_PORT"
+uci set firewall.omrvpn_rule_udp.proto='udp'
+uci set firewall.omrvpn_rule_udp.limit='100/second'
+uci set firewall.omrvpn_rule_udp.target='ACCEPT'
 
 if ! uci_safe_commit firewall; then
     echo -e "${RED}✗ Failed to commit firewall configuration${NC}"
