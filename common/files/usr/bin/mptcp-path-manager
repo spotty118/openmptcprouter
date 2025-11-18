@@ -364,11 +364,27 @@ check_path_degradation() {
     fi
 }
 
+# Clean up stale penalty files for interfaces that no longer exist
+cleanup_stale_penalties() {
+    for penalty_file in "$STATE_DIR"/*.penalty_*; do
+        [ -f "$penalty_file" ] || continue
+        local base=$(basename "$penalty_file")
+        local iface=$(echo "$base" | cut -d. -f1)
+        if [ ! -e "/sys/class/net/$iface" ]; then
+            rm -f "$penalty_file"
+            log_info "Cleaned up stale penalty file for removed interface: $iface"
+        fi
+    done
+}
+
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
-    for iface in $(ls /sys/class/net/ 2>/dev/null); do
+    # Use glob directly instead of ls for efficiency and POSIX compliance
+    for iface_path in /sys/class/net/*; do
+        [ -e "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
         if is_wan_interface "$iface"; then
             check_path_recovery "$iface" "$now"
             check_path_blacklisting "$iface" "$now"
@@ -380,7 +396,18 @@ monitor_paths() {
 # Main monitoring loop
 log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_interval: ${CHECK_INTERVAL}s)"
 
+CLEANUP_COUNTER=0
+CLEANUP_INTERVAL=60  # Run cleanup every 60 iterations (~5 minutes with 5s interval)
+
 while true; do
     monitor_paths
+
+    # Periodic cleanup of stale files
+    CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
+    if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
+        cleanup_stale_penalties
+        CLEANUP_COUNTER=0
+    fi
+
     sleep "$CHECK_INTERVAL"
 done

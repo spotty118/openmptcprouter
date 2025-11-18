@@ -7,6 +7,9 @@ STOP=10
 
 USE_PROCD=1
 
+STATE_DIR="/var/run/mptcp-paths"
+METRICS_DIR="/var/run/mptcp-metrics"
+
 # Verify MPTCP is available in kernel
 verify_mptcp() {
     # Check for MPTCP sysctl (try both old and new naming)
@@ -18,7 +21,27 @@ verify_mptcp() {
     return 1
 }
 
+# Check if required binaries exist
+check_binaries() {
+    local missing=0
+    if [ ! -x /usr/bin/mptcp-metrics-exporter ]; then
+        logger -t mptcp-manager -p daemon.err "ERROR: /usr/bin/mptcp-metrics-exporter not found or not executable"
+        missing=1
+    fi
+    if [ ! -x /usr/bin/mptcp-path-manager ]; then
+        logger -t mptcp-manager -p daemon.err "ERROR: /usr/bin/mptcp-path-manager not found or not executable"
+        missing=1
+    fi
+    return $missing
+}
+
 start_service() {
+    # Check binaries exist
+    if ! check_binaries; then
+        logger -t mptcp-manager -p daemon.err "Cannot start - required binaries missing"
+        return 1
+    fi
+
     # Verify MPTCP availability before starting
     if ! verify_mptcp; then
         logger -t mptcp-manager -p daemon.warning "WARNING: MPTCP not available in kernel - bonding may not work"
@@ -26,6 +49,9 @@ start_service() {
     else
         logger -t mptcp-manager -p daemon.info "MPTCP kernel support detected"
     fi
+
+    # Create state directories
+    mkdir -p "$STATE_DIR" "$METRICS_DIR"
 
     # Start metrics exporter
     procd_open_instance metrics-exporter
@@ -47,9 +73,36 @@ start_service() {
 }
 
 stop_service() {
-    logger -t mptcp-manager "MPTCP intelligent path management stopped"
+    logger -t mptcp-manager "MPTCP intelligent path management stopping"
+
+    # Clean up state files to prevent stale data on restart
+    # Keep metrics for debugging but clear volatile state
+    rm -f "$STATE_DIR"/*.blacklist 2>/dev/null
+    rm -f "$STATE_DIR"/*.degraded 2>/dev/null
+    rm -f "$STATE_DIR"/*.penalty_* 2>/dev/null
+
+    logger -t mptcp-manager "MPTCP intelligent path management stopped (state cleared)"
 }
 
 service_triggers() {
     procd_add_reload_trigger "network"
+}
+
+# Status helper
+status_service() {
+    if [ -x /usr/bin/omr-mptcp-status ]; then
+        /usr/bin/omr-mptcp-status
+    else
+        echo "MPTCP Manager service"
+        if pgrep -f mptcp-path-manager >/dev/null 2>&1; then
+            echo "  path-manager: running"
+        else
+            echo "  path-manager: stopped"
+        fi
+        if pgrep -f mptcp-metrics-exporter >/dev/null 2>&1; then
+            echo "  metrics-exporter: running"
+        else
+            echo "  metrics-exporter: stopped"
+        fi
+    fi
 }

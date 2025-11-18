@@ -44,8 +44,8 @@ get_carrier_config() {
     # Priority 2: Global carrier setting
     [ -z "$carrier" ] && carrier=$(uci -q get "network.globals.carrier")
 
-    # Priority 3: Environment variable
-    [ -z "$carrier" ] && carrier="$USA_CARRIER"
+    # Priority 3: Environment variable (use default to avoid set -u error)
+    [ -z "$carrier" ] && carrier="${USA_CARRIER:-}"
 
     echo "$carrier"
 }
