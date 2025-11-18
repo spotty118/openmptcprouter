@@ -137,7 +137,14 @@ if [ -z "$VPS_PUBLIC_IP" ]; then
     read -r -p "Please enter your VPS public IP address: " VPS_PUBLIC_IP < /dev/tty
     if [ -z "$VPS_PUBLIC_IP" ]; then
         print_error "VPS public IP is required"
+        exit 1
     fi
+fi
+
+# Validate IP address format
+if ! [[ "$VPS_PUBLIC_IP" =~ ^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$ ]]; then
+    print_error "Invalid IP address format: $VPS_PUBLIC_IP"
+    exit 1
 fi
 
 INTERFACE=$(ip -o -4 route show to default | awk '{print $5}' | head -n1)
@@ -468,8 +475,8 @@ cat > /etc/iptables/rules.v4 << IPTABLES
 -A INPUT -p tcp --dport 8080 -j ACCEPT
 
 # Forward traffic from VPN to internet
--A FORWARD -i tun+ -o $INTERFACE -j ACCEPT
--A FORWARD -i mlvpn+ -o $INTERFACE -j ACCEPT
+-A FORWARD -i tun+ -o "$INTERFACE" -j ACCEPT
+-A FORWARD -i mlvpn+ -o "$INTERFACE" -j ACCEPT
 
 COMMIT
 
