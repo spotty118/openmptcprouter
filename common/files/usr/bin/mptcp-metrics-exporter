@@ -129,18 +129,21 @@ export_interface_metrics() {
 
     if [ -f "$prev_file" ]; then
         # Read previous values
-        IFS='|' read -r _ prev_ts prev_rx_packets prev_tx_packets prev_rx_bytes prev_tx_bytes prev_rx_errors prev_tx_errors _ _ _ < "$prev_file"
+        IFS='|' read -r _ prev_ts prev_rx_packets prev_tx_packets prev_rx_bytes prev_tx_bytes prev_rx_errors prev_tx_errors _ _ _ _ _ _ _ prev_rx_dropped prev_tx_dropped < "$prev_file"
 
         # Calculate deltas
         local packets_delta=$((rx_packets - prev_rx_packets))
         local errors_delta=$((rx_errors - prev_rx_errors))
+        local dropped_delta=$((rx_dropped - ${prev_rx_dropped:-0}))
         local time_delta=$((now - prev_ts))
         local rx_bytes_delta=$((rx_bytes - prev_rx_bytes))
         local tx_bytes_delta=$((tx_bytes - prev_tx_bytes))
 
         # Calculate loss rate in basis points (0.01%)
+        # Include both errors and drops for accurate loss measurement
         if [ "$packets_delta" -gt 0 ]; then
-            loss_rate=$((errors_delta * 10000 / packets_delta))
+            local total_loss=$((errors_delta + dropped_delta))
+            loss_rate=$((total_loss * 10000 / packets_delta))
         fi
 
         # Calculate throughput in bytes per second

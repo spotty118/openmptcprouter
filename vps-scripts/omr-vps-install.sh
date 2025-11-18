@@ -42,6 +42,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
+# Helper function to escape special characters for sed replacement
+escape_sed_replacement() {
+    printf '%s\n' "$1" | sed -e 's/[&/\]/\\&/g'
+}
+
 # Banner
 echo -e "${BLUE}"
 cat << 'EOF'
@@ -230,8 +235,8 @@ net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
 net.ipv4.tcp_fin_timeout = 10
 net.ipv4.tcp_max_tw_buckets = 2000000
-# TCP keepalive - AGGRESSIVE for WAN bonding failover (50s total)
-# Must match client settings for consistent failover detection
+# TCP keepalive - AGGRESSIVE for WAN bonding failover
+# Must match client settings (20/3/10=50s) for consistent failover detection
 net.ipv4.tcp_keepalive_time = 20
 net.ipv4.tcp_keepalive_probes = 3
 net.ipv4.tcp_keepalive_intvl = 10
@@ -419,8 +424,9 @@ COMMIT
 COMMIT
 IPTABLES
 
-# Replace placeholder with actual interface
-sed -i "s/INTERFACE_PLACEHOLDER/$INTERFACE/g" /etc/iptables/rules.v4
+# Replace placeholder with actual interface (escaped for sed safety)
+SAFE_INTERFACE=$(escape_sed_replacement "$INTERFACE")
+sed -i "s/INTERFACE_PLACEHOLDER/$SAFE_INTERFACE/g" /etc/iptables/rules.v4
 
 # Apply iptables rules
 iptables-restore < /etc/iptables/rules.v4
