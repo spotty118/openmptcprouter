@@ -13,6 +13,29 @@ set -e
 umask 0022
 unset GREP_OPTIONS SED
 
+# Retry function with exponential backoff for network operations
+_retry_with_backoff() {
+	local max_attempts=4
+	local attempt=1
+	local delay=2
+
+	while [ $attempt -le $max_attempts ]; do
+		if "$@"; then
+			return 0
+		fi
+
+		if [ $attempt -lt $max_attempts ]; then
+			echo "Attempt $attempt failed, retrying in ${delay}s..."
+			sleep $delay
+			delay=$((delay * 2))
+		fi
+		attempt=$((attempt + 1))
+	done
+
+	echo "ERROR: Command failed after $max_attempts attempts: $*"
+	return 1
+}
+
 _get_repo() (
 	mkdir -p "$1"
 	cd "$1"
@@ -22,8 +45,9 @@ _get_repo() (
 	else
 		git remote add origin "$2"
 	fi
-	git fetch origin -f
-	git fetch origin --tags -f
+	# Use retry logic for network operations
+	_retry_with_backoff git fetch origin -f || exit 1
+	_retry_with_backoff git fetch origin --tags -f || exit 1
 	git checkout -f "origin/$3" -B "build" 2>/dev/null || git checkout -f "$3" -B "build"
 )
 
@@ -194,12 +218,12 @@ if [ "$ONLY_PREPARE" != "yes" ]; then
 		_get_repo "$OMR_TARGET/${OMR_KERNEL}/source" ${OMR_OPENWRT_GIT}/openwrt/openwrt "main"
 		_get_repo feeds/${OMR_KERNEL}/packages ${OMR_OPENWRT_GIT}/openwrt/packages "main"
 		_get_repo feeds/${OMR_KERNEL}/luci ${OMR_OPENWRT_GIT}/openwrt/luci "main"
-		_get_repo feeds/${OMR_KERNEL}/luci ${OMR_OPENWRT_GIT}/openwrt/routing "main"
+		_get_repo feeds/${OMR_KERNEL}/routing ${OMR_OPENWRT_GIT}/openwrt/routing "main"
 	else
 		_get_repo "$OMR_TARGET/${OMR_KERNEL}/source" ${OMR_OPENWRT_GIT}/openwrt/openwrt "${OMR_OPENWRT}"
 		_get_repo feeds/${OMR_KERNEL}/packages ${OMR_OPENWRT_GIT}/openwrt/packages "${OMR_OPENWRT}"
 		_get_repo feeds/${OMR_KERNEL}/luci ${OMR_OPENWRT_GIT}/openwrt/luci "${OMR_OPENWRT}"
-		_get_repo feeds/${OMR_KERNEL}/luci ${OMR_OPENWRT_GIT}/openwrt/routing "${OMR_OPENWRT}"
+		_get_repo feeds/${OMR_KERNEL}/routing ${OMR_OPENWRT_GIT}/openwrt/routing "${OMR_OPENWRT}"
 	fi
 fi
 
