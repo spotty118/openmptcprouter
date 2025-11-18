@@ -1,8 +1,9 @@
-#!/bin/bash
+#!/bin/sh
 # OpenMPTCProuter Centralized Logging Library
 # Provides intelligent, non-annoying logging and diagnostics
 # Copyright 2025 OpenMPTCProuter Optimized
 # Licensed under GPL-3.0
+# Note: POSIX-compatible for busybox ash on OpenWrt
 
 # Log levels (syslog standard)
 readonly LOG_EMERG=0    # System is unusable
@@ -103,16 +104,25 @@ _omr_log_to_file() {
 	local tag=$1
 	local priority=$2
 	local message=$3
+	local lockfile="${OMR_LOG_FILE}.lock"
 
 	# Create log directory if it doesn't exist
 	mkdir -p "$(dirname "$OMR_LOG_FILE")"
 
-	# Rotate if file is too large
+	# Rotate if file is too large (with lock to prevent race conditions)
 	if [ -f "$OMR_LOG_FILE" ]; then
-		local size=$(du -k "$OMR_LOG_FILE" | cut -f1)
-		if [ "$size" -gt "$LOG_MAX_SIZE" ]; then
-			mv "$OMR_LOG_FILE" "${OMR_LOG_FILE}.old"
-			touch "$OMR_LOG_FILE"
+		local size=$(du -k "$OMR_LOG_FILE" 2>/dev/null | cut -f1)
+		if [ -n "$size" ] && [ "$size" -gt "$LOG_MAX_SIZE" ]; then
+			# Use atomic mkdir as a lock to prevent multiple rotations
+			if mkdir "$lockfile" 2>/dev/null; then
+				# Double-check size after acquiring lock
+				size=$(du -k "$OMR_LOG_FILE" 2>/dev/null | cut -f1)
+				if [ -n "$size" ] && [ "$size" -gt "$LOG_MAX_SIZE" ]; then
+					mv "$OMR_LOG_FILE" "${OMR_LOG_FILE}.old" 2>/dev/null
+					touch "$OMR_LOG_FILE"
+				fi
+				rmdir "$lockfile" 2>/dev/null
+			fi
 		fi
 	fi
 
@@ -146,13 +156,16 @@ omr_log_critical() {
 }
 
 # Smart diagnostic function - only logs when something is wrong
+# Usage: omr_check_and_log "name" "success_msg" "failure_msg" command [args...]
+# The command is executed directly (not via eval) for security
 omr_check_and_log() {
 	local check_name=$1
-	local check_command=$2
-	local success_msg=$3
-	local failure_msg=$4
+	local success_msg=$2
+	local failure_msg=$3
+	shift 3
 
-	if eval "$check_command" >/dev/null 2>&1; then
+	# Execute command directly without eval to prevent command injection
+	if "$@" >/dev/null 2>&1; then
 		# Only log success at debug level
 		[ -n "$success_msg" ] && omr_log_debug "$check_name: $success_msg"
 		return 0
@@ -163,12 +176,8 @@ omr_check_and_log() {
 	fi
 }
 
-# Export functions for use by other scripts
-export -f omr_log
-export -f omr_log_debug
-export -f omr_log_info
-export -f omr_log_notice
-export -f omr_log_warning
-export -f omr_log_error
-export -f omr_log_critical
-export -f omr_check_and_log
+# Note: Functions are available when this file is sourced with:
+#   . /usr/lib/omr/omr-logger.sh
+#
+# The export -f syntax is bash-specific and not compatible with busybox ash.
+# Scripts should source this file directly to use the logging functions.

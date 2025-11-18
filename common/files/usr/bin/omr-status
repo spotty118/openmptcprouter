@@ -175,12 +175,13 @@ get_traffic_stats() {
 }
 
 # Print WAN interface info
+# Args: wan_name proto device metric multipath
 print_wan_info() {
     local wan_name="$1"
-    local proto=$(uci -q get network.$wan_name.proto)
-    local device=$(uci -q get network.$wan_name.device)
-    local metric=$(uci -q get network.$wan_name.metric)
-    local multipath=$(uci -q get network.$wan_name.multipath)
+    local proto="$2"
+    local device="$3"
+    local metric="$4"
+    local multipath="$5"
     
     # Get actual interface name (might be different from device)
     local iface="$device"
@@ -237,17 +238,27 @@ main() {
 
     print_header
 
-    # PERF OPTIMIZATION: Cache WAN list to avoid redundant UCI calls (3x → 1x)
+    # PERF OPTIMIZATION: Cache UCI network config once to avoid repeated calls
     # Saves 40-100ms per execution by eliminating duplicate UCI parsing
     local uci_start=$(date +%s%3N 2>/dev/null || date +%s)
-    local wan_list_sorted=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | sort)
-    local wan_list_unsorted=$(uci show network 2>/dev/null | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1)
+    local UCI_NETWORK_CACHE
+    UCI_NETWORK_CACHE=$(uci show network 2>/dev/null)
     local uci_end=$(date +%s%3N 2>/dev/null || date +%s)
     local uci_time=$((uci_end - uci_start))
 
+    # Helper function to get UCI value from cache
+    get_cached_uci() {
+        local key="$1"
+        echo "$UCI_NETWORK_CACHE" | grep "^network\\.${key}=" | cut -d= -f2- | tr -d "'"
+    }
+
+    # Get list of WAN interfaces from cache
+    local wan_list
+    wan_list=$(echo "$UCI_NETWORK_CACHE" | grep "=interface" | grep -E "\.wan" | cut -d. -f2 | cut -d= -f1 | sort)
+
     # Count WAN interfaces from cached list
     local wan_count=0
-    for wan in $wan_list_sorted; do
+    for wan in $wan_list; do
         wan_count=$((wan_count + 1))
     done
 
@@ -267,9 +278,13 @@ main() {
         printf "WAN Interfaces (%d total):\n\n" "$wan_count"
     fi
 
-    # Print each WAN interface using cached list
-    for wan in $wan_list_sorted; do
-        print_wan_info "$wan"
+    # Print each WAN interface using cached values
+    for wan in $wan_list; do
+        local proto=$(get_cached_uci "$wan.proto")
+        local device=$(get_cached_uci "$wan.device")
+        local metric=$(get_cached_uci "$wan.metric")
+        local multipath=$(get_cached_uci "$wan.multipath")
+        print_wan_info "$wan" "$proto" "$device" "$metric" "$multipath"
     done
 
     # Print aggregated status
@@ -281,10 +296,10 @@ main() {
         printf "Aggregation Status:\n"
     fi
 
-    # Count active WANs using cached list
+    # Count active WANs using cached values
     local active_count=0
-    for wan in $wan_list_unsorted; do
-        local device=$(uci -q get network.$wan.device)
+    for wan in $wan_list; do
+        local device=$(get_cached_uci "$wan.device")
         local iface="$device"
         if [ -z "$iface" ]; then
             iface=$(ifstatus "$wan" 2>/dev/null | grep '"device":' | cut -d\" -f4)

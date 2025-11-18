@@ -318,11 +318,13 @@ net.mptcp.mptcp_scheduler = default
 
 # BBR2 Congestion Control
 net.ipv4.tcp_congestion_control = bbr2
-net.core.default_qdisc = fq_codel
+# Use FQ qdisc for BBR (matches client config)
+net.core.default_qdisc = fq
 
 # Network Performance Tuning - Enhanced for Multi-WAN
-net.core.rmem_max = 268435456
-net.core.wmem_max = 268435456
+# Match client buffer sizes (128MB max) for symmetric behavior
+net.core.rmem_max = 134217728
+net.core.wmem_max = 134217728
 net.core.rmem_default = 67108864
 net.core.wmem_default = 67108864
 net.core.netdev_max_backlog = 250000
@@ -330,15 +332,17 @@ net.core.somaxconn = 4096
 net.core.optmem_max = 65536
 
 # TCP Performance - Optimized for Multiple Connections
-net.ipv4.tcp_rmem = 4096 87380 67108864
-net.ipv4.tcp_wmem = 4096 65536 67108864
-net.ipv4.tcp_max_syn_backlog = 8192
+net.ipv4.tcp_rmem = 4096 131072 134217728
+net.ipv4.tcp_wmem = 4096 131072 134217728
+net.ipv4.tcp_max_syn_backlog = 16384
 net.ipv4.tcp_slow_start_after_idle = 0
 net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_fin_timeout = 15
-net.ipv4.tcp_keepalive_time = 300
-net.ipv4.tcp_keepalive_probes = 5
-net.ipv4.tcp_keepalive_intvl = 15
+net.ipv4.tcp_fin_timeout = 10
+# TCP keepalive - AGGRESSIVE for WAN bonding failover
+# Must match client settings for consistent failover detection
+net.ipv4.tcp_keepalive_time = 20
+net.ipv4.tcp_keepalive_probes = 3
+net.ipv4.tcp_keepalive_intvl = 10
 
 # Optimize TCP window size
 net.ipv4.tcp_window_scaling = 1
@@ -372,9 +376,11 @@ net.ipv4.tcp_timestamps = 1
 # Increase connection tracking table size for multi-WAN
 net.nf_conntrack_max = 262144
 
-# Security
-net.ipv4.conf.default.rp_filter = 1
-net.ipv4.conf.all.rp_filter = 1
+# Security - Use loose RP filter for multi-WAN asymmetric routing
+# CRITICAL: Multi-WAN bonding creates asymmetric routes (packet arrives on WAN1, reply via WAN2)
+# Strict mode (=1) would DROP these packets, breaking MPTCP subflows
+net.ipv4.conf.default.rp_filter = 2
+net.ipv4.conf.all.rp_filter = 2
 net.ipv4.conf.all.accept_redirects = 0
 net.ipv4.conf.all.send_redirects = 0
 net.ipv4.conf.all.accept_source_route = 0
@@ -428,12 +434,25 @@ cat > /etc/iptables/rules.v4 << IPTABLES
 # Allow SSH
 -A INPUT -p tcp --dport 22 -j ACCEPT
 
-# Allow OpenMPTCProuter ports
+# Allow OpenMPTCProuter ports with rate limiting to prevent DDoS
+# Shadowsocks port - rate limit new connections (10/min per source IP)
+-A INPUT -p tcp --dport 65500 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 10/min --hashlimit-burst 5 --hashlimit-mode srcip --hashlimit-name ss_conn -j DROP
 -A INPUT -p tcp --dport 65500 -j ACCEPT
+-A INPUT -p udp --dport 65500 -m hashlimit --hashlimit-above 100/sec --hashlimit-burst 50 --hashlimit-mode srcip --hashlimit-name ss_udp -j DROP
 -A INPUT -p udp --dport 65500 -j ACCEPT
+
+# Glorytun TCP port - rate limit new connections
+-A INPUT -p tcp --dport 65510 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 10/min --hashlimit-burst 5 --hashlimit-mode srcip --hashlimit-name gt_tcp_conn -j DROP
 -A INPUT -p tcp --dport 65510 -j ACCEPT
+
+# Glorytun UDP port - rate limit packets
+-A INPUT -p udp --dport 65510 -m hashlimit --hashlimit-above 100/sec --hashlimit-burst 50 --hashlimit-mode srcip --hashlimit-name gt_udp -j DROP
 -A INPUT -p udp --dport 65510 -j ACCEPT
+
+# Additional tunnel ports - rate limit
+-A INPUT -p tcp --dport 65520 -m conntrack --ctstate NEW -m hashlimit --hashlimit-above 10/min --hashlimit-burst 5 --hashlimit-mode srcip --hashlimit-name tun_tcp -j DROP
 -A INPUT -p tcp --dport 65520 -j ACCEPT
+-A INPUT -p udp --dport 65520 -m hashlimit --hashlimit-above 100/sec --hashlimit-burst 50 --hashlimit-mode srcip --hashlimit-name tun_udp -j DROP
 -A INPUT -p udp --dport 65520 -j ACCEPT
 
 # Allow ICMP (ping)
@@ -451,6 +470,19 @@ cat > /etc/iptables/rules.v4 << IPTABLES
 # Forward traffic from VPN to internet
 -A FORWARD -i tun+ -o $INTERFACE -j ACCEPT
 -A FORWARD -i mlvpn+ -o $INTERFACE -j ACCEPT
+
+COMMIT
+
+*mangle
+:PREROUTING ACCEPT [0:0]
+:INPUT ACCEPT [0:0]
+:FORWARD ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+:POSTROUTING ACCEPT [0:0]
+
+# MSS clamping to prevent fragmentation issues with tunnels
+-A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
+-A OUTPUT -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu
 
 COMMIT
 
