@@ -3,6 +3,11 @@
 # Implements hysteresis and blacklisting for stable multi-WAN bonding
 # Part of OpenMPTCProuter bonding behavior fixes
 
+# Source network helper library for safe UCI operations
+if [ -f /usr/lib/omr/omr-network.sh ]; then
+    . /usr/lib/omr/omr-network.sh
+fi
+
 HYSTERESIS_TIME=30        # Require 30 seconds of stability before marking path healthy
 CHECK_INTERVAL=5          # Check every 5 seconds
 STATE_DIR="/var/run/mptcp-paths"
@@ -15,8 +20,23 @@ BLACKLIST_DURATION=300    # Blacklist for 5 minutes
 DEGRADED_THRESHOLD=500    # 5% loss rate (in basis points: 500 = 5.00%)
 DEGRADED_METRIC_PENALTY=50
 
+# Metric bounds
+METRIC_MIN=1
+METRIC_MAX=10000
+
 mkdir -p "$STATE_DIR"
 mkdir -p "$METRICS_DIR"
+
+# Track if we should continue running
+RUNNING=1
+
+# Signal handlers for graceful shutdown
+cleanup_and_exit() {
+    log_info "MPTCP Path Manager shutting down (signal received)"
+    RUNNING=0
+}
+
+trap cleanup_and_exit INT TERM
 
 # Logging helper
 log_info() {
@@ -73,10 +93,16 @@ is_wan_interface() {
     # Validate interface name first
     validate_interface_name "$iface" || return 1
 
-    # Skip non-WAN interfaces
-    case "$iface" in
-        lo|br-*|eth0.1|wlan*client|ifb*|sit*|ip6tnl*) return 1 ;;
-    esac
+    # Use helper library if available for comprehensive virtual interface check
+    if type is_virtual_interface >/dev/null 2>&1; then
+        is_virtual_interface "$iface" && return 1
+    else
+        # Fallback: Skip common non-WAN interfaces
+        case "$iface" in
+            lo|br-*|eth0.1|eth0.2|wlan*client|apcli*|ifb*|sit*|ip6tnl*|ip6gre*) return 1 ;;
+            tun*|tap*|gre*|vpn*|wg*|ppp*|docker*|veth*|nss*) return 1 ;;
+        esac
+    fi
 
     # Check if interface has multipath enabled in UCI
     local multipath=$(uci get network.${iface}.multipath 2>/dev/null)
@@ -193,34 +219,38 @@ apply_metric_penalty() {
     fi
 
     local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
+    local uci_section="$iface"
+
     if [ -z "$current_metric" ]; then
-        # Find interface in UCI
-        local uci_section=$(uci show network | grep "device='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
-        if [ -z "$uci_section" ]; then
-            # Try by ifname
-            uci_section=$(uci show network | grep "ifname='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+        # Find interface in UCI using helper library if available
+        if type get_uci_section_for_device >/dev/null 2>&1; then
+            uci_section=$(get_uci_section_for_device "$iface")
+        else
+            # Fallback to grep/cut (less reliable)
+            uci_section=$(uci show network | grep "device='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+            if [ -z "$uci_section" ]; then
+                uci_section=$(uci show network | grep "ifname='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+            fi
         fi
 
         if [ -n "$uci_section" ]; then
             current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
-            local new_metric=$((current_metric + penalty))
-            uci set network.${uci_section}.metric="$new_metric"
-            uci commit network
-            mark_penalty_applied "$iface" "$penalty_type"
-            log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
-            return 0
+        else
+            log_warn "Could not apply metric penalty to $iface: interface not found in UCI"
+            return 1
         fi
-    else
-        local new_metric=$((current_metric + penalty))
-        uci set network.${iface}.metric="$new_metric"
-        uci commit network
-        mark_penalty_applied "$iface" "$penalty_type"
-        log_warn "Applied $penalty metric penalty to $iface: $reason (metric: $current_metric -> $new_metric)"
-        return 0
     fi
 
-    log_warn "Could not apply metric penalty to $iface: interface not found in UCI"
-    return 1
+    # Calculate new metric with bounds enforcement
+    local new_metric=$((current_metric + penalty))
+    [ "$new_metric" -gt "$METRIC_MAX" ] && new_metric="$METRIC_MAX"
+    [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
+
+    uci set network.${uci_section}.metric="$new_metric"
+    uci commit network
+    mark_penalty_applied "$iface" "$penalty_type"
+    log_warn "Applied $penalty metric penalty to $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
+    return 0
 }
 
 # Remove metric penalty from interface
@@ -236,44 +266,37 @@ remove_metric_penalty() {
     fi
 
     local current_metric=$(uci get network.${iface}.metric 2>/dev/null)
+    local uci_section="$iface"
+
     if [ -z "$current_metric" ]; then
-        # Find interface in UCI
-        local uci_section=$(uci show network | grep "device='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
-        if [ -z "$uci_section" ]; then
-            uci_section=$(uci show network | grep "ifname='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+        # Find interface in UCI using helper library if available
+        if type get_uci_section_for_device >/dev/null 2>&1; then
+            uci_section=$(get_uci_section_for_device "$iface")
+        else
+            # Fallback to grep/cut (less reliable)
+            uci_section=$(uci show network | grep "device='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+            if [ -z "$uci_section" ]; then
+                uci_section=$(uci show network | grep "ifname='$iface'" | cut -d'.' -f2 | cut -d'=' -f1 | head -1)
+            fi
         fi
 
         if [ -n "$uci_section" ]; then
             current_metric=$(uci get network.${uci_section}.metric 2>/dev/null || echo 100)
-            # Guard against underflow - ensure we don't go below minimum usable metric
-            local min_metric=10
-            local new_metric=$((current_metric - penalty))
-            if [ "$new_metric" -lt "$min_metric" ]; then
-                new_metric=$min_metric
-                log_warn "Metric underflow prevented for $iface: clamped to $min_metric"
-            fi
-            uci set network.${uci_section}.metric="$new_metric"
-            uci commit network
-            mark_penalty_removed "$iface" "$penalty_type"
-            log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
-            return 0
+        else
+            return 1
         fi
-    else
-        # Guard against underflow
-        local min_metric=10
-        local new_metric=$((current_metric - penalty))
-        if [ "$new_metric" -lt "$min_metric" ]; then
-            new_metric=$min_metric
-            log_warn "Metric underflow prevented for $iface: clamped to $min_metric"
-        fi
-        uci set network.${iface}.metric="$new_metric"
-        uci commit network
-        mark_penalty_removed "$iface" "$penalty_type"
-        log_info "Removed $penalty metric penalty from $iface: $reason (metric: $current_metric -> $new_metric)"
-        return 0
     fi
 
-    return 1
+    # Calculate new metric with bounds enforcement
+    local new_metric=$((current_metric - penalty))
+    [ "$new_metric" -gt "$METRIC_MAX" ] && new_metric="$METRIC_MAX"
+    [ "$new_metric" -lt "$METRIC_MIN" ] && new_metric="$METRIC_MIN"
+
+    uci set network.${uci_section}.metric="$new_metric"
+    uci commit network
+    mark_penalty_removed "$iface" "$penalty_type"
+    log_info "Removed $penalty metric penalty from $iface ($uci_section): $reason (metric: $current_metric -> $new_metric)"
+    return 0
 }
 
 # FIX 2.1: Check path recovery with hysteresis
@@ -395,11 +418,30 @@ check_path_degradation() {
     fi
 }
 
+# Clean up stale state files for interfaces that no longer exist
+cleanup_stale_states() {
+    for state_file in "$STATE_DIR"/*; do
+        [ -f "$state_file" ] || continue
+        local basename=$(basename "$state_file")
+        # Skip files with extensions (like .blacklist, .degraded, .penalty_*)
+        case "$basename" in
+            *.blacklist|*.degraded|*.penalty_*|*.tmp.*) continue ;;
+        esac
+        # Check if interface still exists
+        if [ ! -e "/sys/class/net/$basename" ]; then
+            log_info "Cleaning up stale state for removed interface: $basename"
+            rm -f "$STATE_DIR/${basename}"*
+        fi
+    done
+}
+
 # Monitor all WAN paths
 monitor_paths() {
     local now=$(date +%s)
 
-    for iface in $(ls /sys/class/net/ 2>/dev/null); do
+    for iface_path in /sys/class/net/*; do
+        [ -e "$iface_path" ] || continue
+        local iface=$(basename "$iface_path")
         if is_wan_interface "$iface"; then
             check_path_recovery "$iface" "$now"
             check_path_blacklisting "$iface" "$now"
@@ -414,18 +456,20 @@ log_info "MPTCP Path Manager starting (hysteresis: ${HYSTERESIS_TIME}s, check_in
 # Initial cleanup of stale state files from previous runs
 cleanup_stale_states
 
-# Counter for periodic cleanup (every 60 checks = 5 minutes at 5s interval)
-cleanup_counter=0
+CLEANUP_COUNTER=0
+CLEANUP_INTERVAL=60  # Cleanup every 60 iterations (5 min at 5s interval)
 
-while true; do
+while [ "$RUNNING" -eq 1 ]; do
     monitor_paths
 
-    # Periodic cleanup of stale states (in case interfaces were removed)
-    cleanup_counter=$((cleanup_counter + 1))
-    if [ "$cleanup_counter" -ge 60 ]; then
+    # Periodic cleanup of stale states
+    CLEANUP_COUNTER=$((CLEANUP_COUNTER + 1))
+    if [ "$CLEANUP_COUNTER" -ge "$CLEANUP_INTERVAL" ]; then
         cleanup_stale_states
-        cleanup_counter=0
+        CLEANUP_COUNTER=0
     fi
 
     sleep "$CHECK_INTERVAL"
 done
+
+log_info "MPTCP Path Manager stopped"
