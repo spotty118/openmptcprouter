@@ -1,0 +1,352 @@
+================================================================================
+                  OpenMPTCProuter Optimized - Executive Summary
+================================================================================
+
+PROJECT ESSENCE:
+A sophisticated multi-WAN bonding router OS that uses MPTCP (Multipath TCP) to
+aggregate multiple internet connections (fiber, ADSL, mobile, USB modems) and
+encrypts all traffic through a VPS for privacy and redundancy.
+
+================================================================================
+                              KEY STATISTICS
+================================================================================
+
+Codebase:
+  - Repository: 1GB+ (with kernel sources)
+  - Kernel versions: 5 major versions (5.4, 6.1, 6.6, 6.10, 6.12)
+  - Supported devices: 40+ hardware platforms
+  - Documentation: 60+ detailed audit/guide documents
+  
+Code Organization:
+  - Router-side scripts: 12 tools (3.3K total lines)
+  - VPS wizard: 37,532 lines (single largest component)
+  - Kernel patches: 23 (BBR2, WiFi7, NAT optimization)
+  - USB modem database: 700+ device definitions
+  - Configuration packages: 20+ OpenWrt packages
+
+================================================================================
+                          CORE TECHNOLOGY STACK
+================================================================================
+
+LAYER              TECHNOLOGY                  KEY FILES
+─────────────────────────────────────────────────────────────────────────────
+OS                 OpenWrt (Linux 5.4-6.12)   build.sh, quick-setup.sh
+Multi-WAN          MPTCP (kernel)              99-omr-mptcp-5g-optimization.conf
+Scheduling         BLEST (bandwidth-delay)    mptcp-path-manager
+Monitoring         Metrics exporter           mptcp-metrics-exporter
+VPN Encryption     Shadowsocks/WireGuard      vps-scripts/wizard.sh
+Failover Logic     Path blacklisting          mptcp-path-manager
+Signal Detection   QMI/MBIM modems            mptcp-metrics-exporter
+Congestion Ctrl    BBR2                       patches/bbr2.patch
+DNS/DHCP          dnsmasq                    OpenWrt standard
+Firewall          nftables                   network/config/firewall
+Web UI            LuCI                       luci-theme-omr-optimized
+
+================================================================================
+                      ARCHITECTURAL SEPARATION
+================================================================================
+
+ROUTER-SIDE (Client)         │  VPS-SIDE (Server)
+─────────────────────────────┼──────────────────────────────
+Detects WANs                 │  Accepts encrypted traffic
+Aggregates paths (MPTCP)     │  Decrypts traffic
+Encrypts outbound            │  Routes to internet
+Routes inbound               │  Re-encrypts return traffic
+Monitors link quality        │  Provides public IP
+LuCI web interface           │  Web setup interface
+Emergency recovery           │  Firewall management
+Config: /etc/config/ (UCI)   │  Config: /etc/openmptcprouter/config.json
+
+Physical Separation: Different machines + only encrypted tunnel between them
+
+================================================================================
+                      MULTI-WAN BONDING INTELLIGENCE
+================================================================================
+
+FAILOVER MECHANISM: (~50 second timeout)
+  1. tcp_keepalive_time: 20 seconds (initial probe)
+  2. tcp_keepalive_probes: 3 attempts
+  3. tcp_keepalive_intvl: 10 seconds between probes
+  4. Total: 20 + (3 × 10) = 50 seconds (vs 375 seconds default)
+
+PATH MONITORING: mptcp-path-manager service
+  - Hysteresis: 30-second stability requirement before marking path healthy
+  - Blacklisting: 5 failures in 5 minutes = 5-minute blacklist
+  - Degradation: 5% loss threshold triggers special handling
+  - State files: /var/run/mptcp-paths/interface_name
+
+METRICS COLLECTION: mptcp-metrics-exporter service
+  - RTT (round-trip time)
+  - Packet loss percentage
+  - Jitter variation
+  - Signal strength (RSSI, RSRP for modems)
+  - Interface statistics
+  - Update frequency: 10 seconds
+
+SCHEDULER: BLEST (Bandwidth-Latency-Enabled Scheduling Transfers)
+  - Allocates bandwidth proportionally to capacity
+  - Prevents slow paths from blocking fast paths
+  - Calculates opportunity cost of link utilization
+
+================================================================================
+                        SUPPORTED HARDWARE
+================================================================================
+
+Computing Platforms:
+  • Raspberry Pi (RPi2, RPi3, RPi4, RPi5)
+  • BananaPi (R1, R2, R3, R3-mini, R4, R4-PoE, R64)
+  • Teltonika RUTX series (RUTX, RUTX12, RUTX50)
+  • Generic x86/x86_64 (PC, mini-PC, VM)
+  • GL.iNET (MT2500, MT3000, MT6000)
+  • ARM development boards (various)
+
+Modem Support (700+ USB device IDs):
+  • Quectel (modern 5G)
+  • Huawei
+  • Sierra Wireless
+  • ZTE
+  • SIMCom
+  • Fibocom (RM551E detailed support)
+  • Telit
+  • MediaTek
+
+Network Types:
+  • Ethernet (standard)
+  • WiFi WAN (client mode)
+  • USB modems (QMI/MBIM protocols)
+  • Carrier aggregation ready
+
+================================================================================
+                      DEPLOYMENT WORKFLOW
+================================================================================
+
+ROUTER DEPLOYMENT:
+  1. Flash image to device (device-specific)
+  2. First boot → system runs uci-defaults scripts
+  3. Auto-detects WAN ports and modems
+  4. Launches web wizard at http://192.168.2.1
+  5. Choose pairing method:
+     - Auto-discovery: Enter VPS IP
+     - Pairing code: Paste code from VPS
+     - Manual: Enter all details
+  6. credentials → stored in /etc/config/
+  7. mptcp-manager service starts
+  8. Multi-WAN bonding active
+
+VPS DEPLOYMENT:
+  1. Run: curl -sSL https://github.com/.../wizard.sh | sudo bash
+  2. Wizard detects OS (Debian/Ubuntu)
+  3. Installs packages, optimizes kernel
+  4. Generates cryptographically-secure credentials
+  5. Configures firewall (allows 65500, 65510, 65520, 8080)
+  6. Generates web interface (port 8080)
+  7. Saves credentials to /root/openmptcprouter_credentials.txt
+  8. shadowsocks-libev-server starts on port 65500
+  9. Ready to accept router connections
+
+================================================================================
+                      CRITICAL FILE LOCATIONS
+================================================================================
+
+KERNEL TUNING (CRITICAL):
+  /common/files/etc/sysctl.d/99-omr-mptcp-5g-optimization.conf
+  - MPTCP enablement
+  - Scheduler selection (BLEST)
+  - TCP buffer sizes (32MB max)
+  - Failover timings
+  - Congestion control (BBR2)
+  
+PATH MANAGEMENT DAEMON:
+  /common/files/etc/init.d/mptcp-manager
+  - Starts metrics exporter and path manager
+  - Auto-restarts on crash
+  - Monitors path health
+  
+MODEM AUTO-CONFIGURATION:
+  /common/files/usr/bin/usb-modem-autoconfig.sh
+  - Triggered on USB device insertion
+  - Supports QMI and MBIM protocols
+  - Creates WAN interfaces automatically
+  
+NETWORK EMERGENCY RECOVERY:
+  /common/files/usr/bin/network-safety-monitor.sh
+  - Prevents network lockouts
+  - Triggers emergency-lan-restore.sh
+  - Detects APIPA conditions
+  
+VPS INSTALLATION (LARGEST COMPONENT):
+  /vps-scripts/wizard.sh (37,532 lines)
+  - Interactive OS detection and setup
+  - Kernel optimization
+  - Firewall configuration
+  - Credential generation
+  - Web interface generation
+  
+BUILD ORCHESTRATION:
+  /build.sh (59,000 lines)
+  - Compiles for all devices/kernels
+  - Applies 23 custom patches
+  - Manages package feeds
+  - Image signing
+
+================================================================================
+                      FIRST-BOOT INITIALIZATION
+================================================================================
+
+/common/files/etc/uci-defaults/ (runs ONCE on first boot):
+
+  05-omr-detect-ram-buffers
+    → Adjusts buffer sizes based on available RAM
+    
+  10-omr-network-defaults
+    → Sets LAN to 192.168.2.1 (STATIC, never DHCP - CRITICAL)
+    → Enables DHCP server for clients
+    → Configures DNS via dnsmasq
+    
+  15-omr-autoconfig-init
+    → Initializes network monitoring services
+    → Creates init.d service scripts
+    
+  90-omr-first-boot-wizard
+    → Launches web-based setup wizard
+    → Accessible at http://192.168.2.1
+    → Interactive VPS pairing interface
+
+================================================================================
+                        DOCUMENTATION MATRIX
+================================================================================
+
+Getting Started:
+  • QUICK_START.md (5-minute overview)
+  • SETUP_GUIDE.md (comprehensive installation)
+  • README.md (project overview)
+
+Technical Deep-Dives:
+  • KERNEL_USERSPACE_INTEGRATION_REPORT.md (bonding architecture)
+  • BONDING_FIX_PROPOSAL.md (failover mechanisms)
+  • KERNEL_TREE_ORGANIZATION.md (kernel structure)
+  • KERNEL_COMPATIBILITY.md (kernel versions)
+  • KERNEL_OPTIMIZATIONS.md (performance tuning)
+
+Quality & Security:
+  • CODE_QUALITY_REPORT.md (code review)
+  • SECURITY_AUDIT_REPORT.md (security analysis)
+  • BACKEND_SECURITY_AUDIT.md (VPS security)
+  • ERROR_HANDLING_AUDIT.md (error management)
+  • DEPENDENCY_REVIEW_REPORT.md (package analysis)
+
+Troubleshooting:
+  • BONDING_METRICS_AUDIT.md (metrics explanation)
+  • PERFORMANCE_AUDIT.txt (performance analysis)
+  • STATE_LIFECYCLE_AUDIT.md (state machine explanation)
+  • TODO_QUICK_REFERENCE.md (known issues)
+
+================================================================================
+                          DEFAULT CONFIGURATION
+================================================================================
+
+ROUTER:
+  LAN IP:              192.168.2.1 (NEVER DHCP - CRITICAL)
+  LAN Netmask:         255.255.255.0
+  DHCP Range:          192.168.2.100-249
+  DHCP Lease:          12 hours
+  First-boot Wizard:   http://192.168.2.1
+  SSH Access:          22 (default OpenWrt)
+  
+VPS:
+  Shadowsocks:         Port 65500 (default tunnel)
+  Glorytun TCP:        Port 65510 (alternative)
+  Glorytun UDP:        Port 65520 (alternative)
+  Web Interface:       Port 8080 (setup page)
+  SSH:                 Port 22 (preserved)
+  
+ENCRYPTION:
+  Method:              chacha20-ietf-poly1305 (default)
+  Alternatives:        aes-256-gcm, aes-128-gcm
+  Credential Storage:  600 permissions (root only)
+
+NETWORK:
+  MPTCP Enabled:       Yes
+  Scheduler:           BLEST (bandwidth-delay aware)
+  Path Manager:        fullmesh (all combinations)
+  Congestion Control:  BBR2
+  TCP Buffers:         32MB max (prevent bufferbloat)
+  Failover Time:       ~50 seconds
+
+================================================================================
+                            PERFORMANCE PROFILE
+================================================================================
+
+Build Time:           15-60 minutes (depends on device)
+Image Size:           50-300MB (device-dependent)
+RAM Footprint:        50-150MB (typical)
+Boot Time:            30-60 seconds (depends on device)
+First-boot Setup:     3-5 minutes (via wizard)
+Failover Detection:   ~50 seconds
+Path Recovery:        30 seconds (hysteresis)
+Metrics Update:       10 seconds
+Router Responsiveness: <10ms (typical LAN)
+VPS Throughput:       Limited by VPS/ISP capacity
+
+================================================================================
+                        KEY DIFFERENTIATORS
+================================================================================
+
+vs Stock OpenWrt:
+  ✓ Multi-WAN bonding (not just failover)
+  ✓ Intelligent path selection (BLEST scheduler)
+  ✓ Automatic USB modem detection
+  ✓ Signal strength integration
+  ✓ Aggressive failover tuning
+  ✓ Pre-configured VPN integration
+  ✓ Simplified first-boot wizard
+
+vs Failover-Only Systems:
+  ✓ Aggregation (combines bandwidth)
+  ✓ Proportional scheduling (faster paths get more traffic)
+  ✓ Hysteresis (no flapping)
+  ✓ Blacklisting (permanent bad-path removal)
+  ✓ Metrics-driven (not just RTT)
+
+vs Proprietary Routers:
+  ✓ Open source (GPL v3)
+  ✓ Highly configurable
+  ✓ Kernel source available
+  ✓ Community-driven
+  ✓ No vendor lock-in
+  ✓ Runs on cheap hardware
+
+================================================================================
+                      FOR DEVELOPERS/RESEARCHERS
+================================================================================
+
+If you want to understand MPTCP bonding, read these files IN ORDER:
+
+1. 99-omr-mptcp-5g-optimization.conf
+   → Shows kernel-level configuration decisions
+   
+2. mptcp-path-manager (317 lines)
+   → Core state machine for path health
+   
+3. mptcp-metrics-exporter (198 lines)
+   → How metrics are collected from hardware
+   
+4. BONDING_FIX_PROPOSAL.md
+   → Explains why these parameters were chosen
+   
+5. KERNEL_USERSPACE_INTEGRATION_REPORT.md
+   → Full architectural explanation
+   
+6. build.sh
+   → Understand how everything is compiled
+   
+7. vps-scripts/wizard.sh
+   → See how VPS side mirrors the configuration
+
+This progression takes you from:
+  Config Parameters → State Machine → Metrics Collection →
+  Design Rationale → Overall Architecture → Compilation → Deployment
+
+================================================================================
+
+Full detailed documentation saved to: /tmp/omr_codebase_overview.md
