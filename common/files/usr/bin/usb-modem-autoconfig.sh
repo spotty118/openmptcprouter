@@ -338,7 +338,7 @@ configure_modem_as_wan() {
 
         # Verify interface is actually up
         if ifstatus "$wan_name" 2>/dev/null | grep -q '"up":true'; then
-            log_msg "✓ Interface $wan_name is up and running"
+            log_msg "[OK] Interface $wan_name is up and running"
             ifup_success=1
         else
             log_msg "WARNING: Interface $wan_name ifup succeeded but interface not up"
@@ -468,8 +468,8 @@ main() {
     done
     
     if [ $configured -gt 0 ]; then
-        log_msg "✓ Configured $configured new USB modem(s) as additional WAN"
-        log_msg "✓ MPTCP bonding enabled for all WANs"
+        log_msg "[OK] Configured $configured new USB modem(s) as additional WAN"
+        log_msg "[OK] MPTCP bonding enabled for all WANs"
         log_msg "Reloading network to apply changes..."
         /etc/init.d/network reload
     else

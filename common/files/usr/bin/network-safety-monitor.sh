@@ -132,10 +132,10 @@ check_interface_ips() {
 
 # Emergency recovery - create a working LAN
 emergency_recovery() {
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
     log_msg "EMERGENCY RECOVERY ACTIVATED"
     log_msg "User locked out - restoring LAN access"
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
 
     # Find any available physical port
     local emergency_port=""
@@ -263,13 +263,13 @@ emergency_recovery() {
         return 1
     fi
 
-    log_msg "═══════════════════════════════════════════════════"
-    log_msg "✓ EMERGENCY RECOVERY COMPLETE"
+    log_msg "==================================================="
+    log_msg "[OK] EMERGENCY RECOVERY COMPLETE"
     log_msg "  LAN restored on port: $emergency_port"
     log_msg "  LAN IP: 192.168.2.1 (verified, static)"
     log_msg "  Access router at: http://192.168.2.1"
     log_msg "  Please reconfigure your network via web UI"
-    log_msg "═══════════════════════════════════════════════════"
+    log_msg "==================================================="
 
     return 0
 }
@@ -289,7 +289,7 @@ fix_lan_protocol() {
         
         /etc/init.d/network reload
         
-        log_msg "✓ LAN fixed to static IP"
+        log_msg "[OK] LAN fixed to static IP"
     fi
 }
 
