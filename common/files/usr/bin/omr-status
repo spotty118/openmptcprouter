@@ -20,6 +20,9 @@ else
     USE_COLOR=0
 fi
 
+# Flag to prevent recursive file saving
+SAVING_TO_FILE=0
+
 print_header() {
     if [ $USE_COLOR -eq 1 ]; then
         printf "${BOLD}${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}\n"
@@ -343,8 +346,12 @@ main() {
         logger -t "omr-status-perf" "Total: ${total_time}ms, UCI: ${uci_time}ms, WANs: $wan_count"
     fi
 
-    # Save status to file for web UI
-    main_plain > /var/run/omr-status.txt 2>/dev/null
+    # Save status to file for web UI (only if not already saving)
+    if [ $SAVING_TO_FILE -eq 0 ]; then
+        SAVING_TO_FILE=1
+        main_plain > /var/run/omr-status.txt 2>/dev/null
+        SAVING_TO_FILE=0
+    fi
 }
 
 # Plain output without colors for file/web UI
