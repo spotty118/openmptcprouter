@@ -142,7 +142,7 @@ get_modem_info() {
     # Validate device path
     if [ -n "$dev" ] && ! echo "$dev" | grep -qE '^/dev/[a-zA-Z0-9_-]+$'; then
         echo "Type: $proto (invalid device path)"
-        return
+        return 1
     fi
 
     local info="Type: $proto"

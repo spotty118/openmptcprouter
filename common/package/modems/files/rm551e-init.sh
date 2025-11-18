@@ -82,7 +82,7 @@ find_at_port() {
     for port in /dev/ttyUSB2 /dev/ttyUSB3 /dev/ttyUSB1 /dev/ttyUSB0; do
         if [ -c "$port" ]; then
             # Test if port responds to AT commands
-            if timeout 2 sh -c "echo -e 'AT\r' > $port 2>/dev/null && cat $port 2>/dev/null" | grep -q "OK"; then
+            if timeout 2 sh -c "printf 'AT\r' > $port 2>/dev/null && cat $port 2>/dev/null" | grep -q "OK"; then
                 echo "$port"
                 return 0
             fi
@@ -111,26 +111,26 @@ configure_modem_mode() {
         sleep $INIT_WAIT_TIME
         
         # Test basic connectivity
-        if ! timeout 3 sh -c "echo -e 'AT\r' > $device && cat $device" | grep -q "OK"; then
+        if ! timeout 3 sh -c "printf 'AT\r' > $device && cat $device" | grep -q "OK"; then
             log_msg "Device $device not responding on attempt $attempt"
             attempt=$((attempt + 1))
             continue
         fi
         
         # Disable echo for cleaner communication
-        echo -e 'ATE0\r' > "$device" 2>/dev/null
+        printf 'ATE0\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Get modem info
         log_msg "Getting modem information..."
-        timeout 3 sh -c "echo -e 'ATI\r' > $device && cat $device" 2>/dev/null | head -n 10
-        
+        timeout 3 sh -c "printf 'ATI\r' > $device && cat $device" 2>/dev/null | head -n 10
+
         # Check firmware version
-        echo -e 'AT+QGMR\r' > "$device" 2>/dev/null
+        printf 'AT+QGMR\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Get current USB configuration
-        local usb_mode=$(timeout 3 sh -c "echo -e 'AT+QCFG=\"usbnet\"\r' > $device && cat $device" 2>/dev/null | grep "+QCFG" | cut -d, -f1 | cut -d'"' -f2)
+        local usb_mode=$(timeout 3 sh -c "printf 'AT+QCFG=\"usbnet\"\r' > $device && cat $device" 2>/dev/null | grep "+QCFG" | cut -d, -f1 | cut -d'"' -f2)
         log_msg "Current USB mode: ${usb_mode:-unknown}"
         
         # Set to QMI mode (0) for best performance with OpenWrt
@@ -138,49 +138,49 @@ configure_modem_mode() {
         # Mode 1 = MBIM
         # Mode 5 = RNDIS
         log_msg "Setting USB mode to QMI (0)"
-        echo -e 'AT+QCFG="usbnet",0\r' > "$device" 2>/dev/null
+        printf 'AT+QCFG="usbnet",0\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Enable all LTE bands for better compatibility
         log_msg "Configuring LTE bands"
-        echo -e 'AT+QCFG="band",0,0,1\r' > "$device" 2>/dev/null
+        printf 'AT+QCFG="band",0,0,1\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Enable 5G NR bands
         log_msg "Configuring 5G NR bands"
-        echo -e 'AT+QNWPREFCFG="nr5g_band",1:2:3:5:7:8:12:20:25:28:38:40:41:48:66:71:77:78:79\r' > "$device" 2>/dev/null
+        printf 'AT+QNWPREFCFG="nr5g_band",1:2:3:5:7:8:12:20:25:28:38:40:41:48:66:71:77:78:79\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Set preferred network mode to AUTO (LTE and 5G)
         log_msg "Setting network mode to AUTO"
-        echo -e 'AT+QNWPREFCFG="mode_pref",AUTO\r' > "$device" 2>/dev/null
+        printf 'AT+QNWPREFCFG="mode_pref",AUTO\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Enable carrier aggregation
         log_msg "Enabling carrier aggregation"
-        echo -e 'AT+QNWCFG="lte_ca",1\r' > "$device" 2>/dev/null
+        printf 'AT+QNWCFG="lte_ca",1\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Enable 5G NR carrier aggregation
-        echo -e 'AT+QNWCFG="nr5g_carrier_aggregation",1\r' > "$device" 2>/dev/null
+        printf 'AT+QNWCFG="nr5g_carrier_aggregation",1\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Enable EN-DC (E-UTRA-NR Dual Connectivity)
-        echo -e 'AT+QNWCFG="endc",1\r' > "$device" 2>/dev/null
+        printf 'AT+QNWCFG="endc",1\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Optimize URB size for better throughput
         log_msg "Optimizing data transfer settings"
-        echo -e 'AT+QCFG="data_interface",0,0\r' > "$device" 2>/dev/null
+        printf 'AT+QCFG="data_interface",0,0\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Set QMI aggregation for better performance
-        echo -e 'AT+QMAP="mpdn_rule",1,1,0,1,1,"INTERNET"\r' > "$device" 2>/dev/null
+        printf 'AT+QMAP="mpdn_rule",1,1,0,1,1,"INTERNET"\r' > "$device" 2>/dev/null
         sleep 1
-        
+
         # Verify configuration
         log_msg "Verifying configuration..."
-        timeout 3 sh -c "echo -e 'AT+QCFG=\"usbnet\"\r' > $device && cat $device" 2>/dev/null | head -n 5
+        timeout 3 sh -c "printf 'AT+QCFG=\"usbnet\"\r' > $device && cat $device" 2>/dev/null | head -n 5
         
         log_msg "Modem configuration complete"
         return 0

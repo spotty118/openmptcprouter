@@ -56,7 +56,7 @@ detect_modem() {
 find_control_device() {
     for dev in /dev/ttyUSB*; do
         if [ -c "$dev" ]; then
-            if timeout 2 sh -c "echo -e 'AT\r' > $dev 2>/dev/null && cat $dev 2>/dev/null" | grep -q "OK"; then
+            if timeout 2 sh -c "printf 'AT\r' > $dev 2>/dev/null && cat $dev 2>/dev/null" | grep -q "OK"; then
                 echo "$dev"
                 return 0
             fi
@@ -74,7 +74,7 @@ check_modem_responsive() {
     fi
     
     # Try AT command
-    if ! timeout 3 sh -c "echo -e 'AT\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep -q "OK"; then
+    if ! timeout 3 sh -c "printf 'AT\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep -q "OK"; then
         return 1
     fi
     
@@ -98,7 +98,7 @@ check_signal_quality() {
     fi
     
     # Get signal quality
-    local signal=$(timeout 3 sh -c "echo -e 'AT+CSQ\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep "+CSQ:" | cut -d: -f2 | cut -d, -f1 | tr -d ' ')
+    local signal=$(timeout 3 sh -c "printf 'AT+CSQ\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep "+CSQ:" | cut -d: -f2 | cut -d, -f1 | tr -d ' ')
     
     if [ -n "$signal" ] && [ "$signal" -ge 0 ] && [ "$signal" -le 31 ]; then
         if [ "$signal" -lt 10 ]; then
@@ -121,7 +121,7 @@ check_network_registration() {
     fi
     
     # Check registration status
-    local reg_status=$(timeout 3 sh -c "echo -e 'AT+CEREG?\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep "+CEREG:" | cut -d, -f2 | tr -d ' ')
+    local reg_status=$(timeout 3 sh -c "printf 'AT+CEREG?\r' > $device 2>/dev/null && cat $device 2>/dev/null" | grep "+CEREG:" | cut -d, -f2 | tr -d ' ')
     
     # Status 1 = registered home network, 5 = registered roaming
     if [ "$reg_status" = "1" ] || [ "$reg_status" = "5" ]; then
@@ -162,7 +162,7 @@ soft_reset_modem() {
     fi
     
     # Reset modem via AT command
-    echo -e 'AT+CFUN=1,1\r' > "$device" 2>/dev/null
+    printf 'AT+CFUN=1,1\r' > "$device" 2>/dev/null
     
     sleep 10
     
