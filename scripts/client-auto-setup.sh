@@ -57,7 +57,8 @@ if [ -z "$VPS_IP" ]; then
 
     # Validate each octet is 0-255
     for octet in $(echo "$VPS_IP" | tr '.' ' '); do
-        if [ "$octet" -lt 0 ] 2>/dev/null || [ "$octet" -gt 255 ] 2>/dev/null; then
+        # Check if numeric and in range
+        if ! echo "$octet" | grep -qE '^[0-9]+$' || [ "$octet" -gt 255 ] 2>/dev/null; then
             echo -e "${RED}Error: Invalid IP address (octets must be 0-255)${NC}"
             exit 1
         fi
@@ -65,7 +66,7 @@ if [ -z "$VPS_IP" ]; then
 
     # Reject reserved IP addresses
     first_octet=$(echo "$VPS_IP" | cut -d. -f1)
-    if [ "$first_octet" -eq 0 ] || [ "$first_octet" -eq 127 ] || [ "$first_octet" -eq 255 ]; then
+    if [ "$first_octet" -eq 0 ] 2>/dev/null || [ "$first_octet" -eq 127 ] 2>/dev/null || [ "$first_octet" -eq 255 ] 2>/dev/null; then
         echo -e "${RED}Error: Reserved IP address not allowed${NC}"
         exit 1
     fi

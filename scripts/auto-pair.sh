@@ -399,8 +399,8 @@ elif [ "$DEVICE_TYPE" = "router" ]; then
                     echo -e "${RED}Error: Invalid IP address (non-numeric octet: $octet)${NC}"
                     exit 1
                 fi
-                # Check range (0-255)
-                if [ "$octet" -lt 0 ] || [ "$octet" -gt 255 ]; then
+                # Check range (0-255) - already validated as numeric, just check upper bound
+                if [ "$octet" -gt 255 ] 2>/dev/null; then
                     echo -e "${RED}Error: Invalid IP address (octet out of range: $octet)${NC}"
                     exit 1
                 fi

@@ -190,7 +190,8 @@ omr_validate_ip() {
         local valid=1
         local octet
         for octet in $(echo "$ip" | tr '.' ' '); do
-            if [ "$octet" -lt 0 ] 2>/dev/null || [ "$octet" -gt 255 ] 2>/dev/null; then
+            # Check if numeric and <= 255 (already validated as numeric by regex)
+            if ! echo "$octet" | grep -qE '^[0-9]+$' || [ "$octet" -gt 255 ] 2>/dev/null; then
                 valid=0
                 break
             fi
