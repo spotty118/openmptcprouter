@@ -495,13 +495,17 @@ For USB modems, add the vendor:product ID to `/lib/network/wwan/`:
 
 ```bash
 # Create file with format: vendor_id-product_id
-# Example: /lib/network/wwan/2c7c-0905
+# Example: /lib/network/wwan/2c7c-0530
 {
-    "desc": "Quectel RM530N-GL",
-    "control": "ttyUSB2",
-    "data": "qmi_wwan0",
-    "qmi": 0,
-    "mbim": 0
+	"desc": "Quectel RM530N-GL (QMI)",
+	"type": "qmi",
+	"control": 2,
+	"baudrate": 115200,
+	"stop_bits": 8,
+	"gps": 1,
+	"ep_iface": 4,
+	"dl_max_size": 32768,
+	"dl_max_datagrams": 64
 }
 ```
 
