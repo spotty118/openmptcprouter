@@ -2,7 +2,7 @@
 	"desc": "Quectel RM520N-GL (ECM/MBIM)",
 	"type": "mbim",
 	"control": 0,
-	"boudrate": 115200,
+	"baudrate": 115200,
 	"stop_bits": 8,
 	"gps": 1,
 	"ep_iface": 0,
