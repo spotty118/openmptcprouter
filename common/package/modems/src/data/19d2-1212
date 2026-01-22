@@ -2,5 +2,6 @@
 	"desc": "ZTE MF195",
 	"control": 0,
 	"data": 0
-}	"acm": 1
+,
+	"acm": 1
 }

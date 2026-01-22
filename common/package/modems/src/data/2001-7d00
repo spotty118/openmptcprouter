@@ -2,5 +2,6 @@
 	"desc": "D-Link DWM-156 A6",
 	"control": 1,
 	"data": 0
-}	"generic": 1
+,
+	"generic": 1
 }

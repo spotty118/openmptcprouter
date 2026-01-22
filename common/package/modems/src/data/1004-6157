@@ -2,5 +2,6 @@
 	"desc": "LG LUU-2110TI",
 	"control": 0,
 	"data": 2
-}	"acm": 1
+,
+	"acm": 1
 }

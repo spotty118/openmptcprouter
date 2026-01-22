@@ -2,5 +2,6 @@
 	"desc": "Alcatel X085C",
 	"control": 2,
 	"data": 2
-}	"generic": 1
+,
+	"generic": 1
 }

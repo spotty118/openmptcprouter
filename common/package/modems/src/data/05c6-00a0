@@ -2,5 +2,6 @@
 	"desc": "Axesstel MV241",
 	"control": 2,
 	"data": 0
-}	"generic": 1
+,
+	"generic": 1
 }
